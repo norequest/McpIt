@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Latest stable BenchmarkDotNet as of 2026-06-27. -->
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- McpIt's FrameworkReference (Microsoft.AspNetCore.App) does not propagate
+         automatically through project references, so it is listed explicitly here,
+         matching the pattern used by McpIt.Runtime.Tests. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\..\src\McpIt\McpIt.csproj" />
+    <ProjectReference Include="..\..\src\McpIt.Abstractions\McpIt.Abstractions.csproj" />
+  </ItemGroup>
+</Project>
