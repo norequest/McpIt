@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using McpIt.Generator.Internal;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace McpIt.Generator;
 
@@ -377,6 +378,210 @@ public static class ModelBuilder
             current = current.BaseType;
         }
         return false;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Lambda-from-syntax path: builds an EndpointModel from an inline lambda
+    // passed to a Delegate-typed Map* overload (the real ASP.NET Core shape).
+    // Roslyn's GetSymbolInfo returns null for such lambdas, so we derive
+    // everything from the lambda expression's own syntax and SemanticModel.
+    //
+    // Constraints:
+    //   - Lambda must carry [McpTool] in its AttributeLists; otherwise null.
+    //   - All lambda parameters must have explicit type declarations; a param
+    //     without an explicit type causes the entire endpoint to be skipped
+    //     (returns null) since the type cannot be classified.
+    //   - ParameterClassifier.Classify is called unchanged for each resolved param.
+    //   - Lambdas have no XML doc comments; description comes from [Description]
+    //     attribute syntax only (empty otherwise, which triggers MCPGEN001).
+    // ---------------------------------------------------------------------------
+    // classNameOverride: caller-supplied name derived from verb + sanitized route +
+    //   containing type; avoids relying on the compiler-generated lambda method name.
+    // toolNameHint: route-derived fallback tool name used when no explicit
+    //   McpTool(Name=...) is set.
+    public static EndpointModel? BuildFromLambda(
+        LambdaExpressionSyntax lambda,
+        string verb,
+        string route,
+        SemanticModel semanticModel,
+        Compilation compilation,
+        string? classNameOverride = null,
+        string? toolNameHint = null,
+        System.Threading.CancellationToken ct = default)
+    {
+        // Locate [McpTool] in the lambda's AttributeLists; reject unmarked lambdas.
+        var mcpAttrSyntax = FindMcpToolAttributeSyntax(lambda, semanticModel);
+        if (mcpAttrSyntax is null) return null;
+
+        // Read McpTool named args directly from syntax (no IMethodSymbol available here).
+        var explicitName     = ReadAttrStringArg(mcpAttrSyntax, "Name");
+        var explicitTitle    = ReadAttrStringArg(mcpAttrSyntax, "Title");
+        var allowDestructive = ReadAttrBoolArg(mcpAttrSyntax, "AllowDestructive");
+        var requiredScope    = ReadAttrStringArg(mcpAttrSyntax, "RequiredScope");
+
+        // Resolve enclosing namespace through the semantic model.
+        var ns = GetLambdaNamespace(lambda, semanticModel);
+
+        // Class name: caller-supplied override (verb + route + type) is strongly preferred;
+        // the fallback keeps the name valid when context is unavailable.
+        var className = classNameOverride ?? $"MinApi_Lambda_{verb}_Tool";
+
+        // Tool name: explicit Name wins; otherwise use the route-derived hint or bare verb.
+        var toolName = string.IsNullOrWhiteSpace(explicitName)
+            ? (toolNameHint ?? verb.ToLowerInvariant())
+            : explicitName!;
+
+        // Collect and resolve lambda parameters; bail out on any unresolvable param.
+        var paramSyntaxes = GetLambdaParameterSyntaxes(lambda);
+        var ctType = compilation.GetTypeByMetadataName("System.Threading.CancellationToken");
+
+        var parameters = new System.Collections.Generic.List<ParameterModel>();
+        foreach (var paramSyntax in paramSyntaxes)
+        {
+            // No explicit type means we cannot determine the kind; skip the endpoint.
+            if (paramSyntax.Type is null) return null;
+
+            var paramSym = semanticModel.GetDeclaredSymbol(paramSyntax, ct) as IParameterSymbol;
+            if (paramSym is null) return null;
+
+            if (IsCancellationToken(paramSym.Type, ctType)) continue;
+
+            parameters.Add(ParameterClassifier.Classify(paramSym, route));
+        }
+
+        // Description: no XML doc on lambdas; check [Description] attribute in syntax.
+        var description = GetDescriptionFromLambdaAttrs(lambda, semanticModel);
+
+        var title = string.IsNullOrWhiteSpace(explicitTitle)
+            ? DeriveTitle(toolName)
+            : explicitTitle!;
+
+        var (readOnly, destructive, idempotent) = DeriveSafety(verb);
+
+        return new EndpointModel(
+            Namespace: ns,
+            GeneratedClassName: className,
+            ToolName: toolName,
+            Description: description,
+            HttpMethod: verb,
+            RouteTemplate: route,
+            Parameters: new EquatableArray<ParameterModel>(parameters.ToArray()),
+            ReadOnly: readOnly,
+            Destructive: destructive,
+            Idempotent: idempotent,
+            AllowDestructive: allowDestructive,
+            OutputMaxLength: null,
+            OutputFields: new EquatableArray<string>(Array.Empty<string>()),
+            OutputMaxItems: null,
+            Title: title,
+            Location: LocationInfo.From(lambda.GetLocation()),
+            RequiredScope: requiredScope);
+    }
+
+    // Finds the [McpTool] attribute in a lambda's AttributeLists.
+    // Uses the semantic model for accurate type-based matching; falls back to a name check
+    // when binding is incomplete (partial compilation).
+    private static AttributeSyntax? FindMcpToolAttributeSyntax(
+        LambdaExpressionSyntax lambda,
+        SemanticModel semanticModel)
+    {
+        foreach (var attrList in lambda.AttributeLists)
+        foreach (var attr in attrList.Attributes)
+        {
+            // Primary: semantic model verification.
+            var symInfo = semanticModel.GetSymbolInfo(attr);
+            var ctor = (symInfo.Symbol ?? symInfo.CandidateSymbols.FirstOrDefault()) as IMethodSymbol;
+            if (ctor?.ContainingType?.ToDisplayString() == "McpIt.McpToolAttribute")
+                return attr;
+
+            // Fallback: attribute name when symbol resolution is unavailable.
+            var attrName = attr.Name.ToString();
+            if (attrName is "McpTool" or "McpToolAttribute"
+                         or "McpIt.McpTool" or "McpIt.McpToolAttribute")
+                return attr;
+        }
+        return null;
+    }
+
+    // Reads a string literal named argument value from an attribute's argument list.
+    // Returns null when the argument is absent or is not a string literal.
+    private static string? ReadAttrStringArg(AttributeSyntax attr, string argName)
+    {
+        if (attr.ArgumentList is null) return null;
+        foreach (var arg in attr.ArgumentList.Arguments)
+        {
+            if (arg.NameEquals?.Name.Identifier.Text == argName &&
+                arg.Expression is LiteralExpressionSyntax lit)
+                return lit.Token.ValueText;
+        }
+        return null;
+    }
+
+    // Reads a bool literal named argument value from an attribute's argument list.
+    // Returns false when the argument is absent or not a recognizable bool literal.
+    private static bool ReadAttrBoolArg(AttributeSyntax attr, string argName)
+    {
+        if (attr.ArgumentList is null) return false;
+        foreach (var arg in attr.ArgumentList.Arguments)
+        {
+            if (arg.NameEquals?.Name.Identifier.Text == argName &&
+                arg.Expression is LiteralExpressionSyntax lit)
+                return lit.Token.ValueText == "true";
+        }
+        return false;
+    }
+
+    // Returns the fully-qualified namespace of the lambda's enclosing type via the
+    // semantic model, or empty string for the global namespace.
+    private static string GetLambdaNamespace(LambdaExpressionSyntax lambda, SemanticModel semanticModel)
+    {
+        var parent = lambda.Parent;
+        while (parent is not null)
+        {
+            if (parent is TypeDeclarationSyntax typeDecl)
+            {
+                var typeSymbol = semanticModel.GetDeclaredSymbol(typeDecl) as INamedTypeSymbol;
+                if (typeSymbol is not null)
+                {
+                    return typeSymbol.ContainingNamespace.IsGlobalNamespace
+                        ? string.Empty
+                        : typeSymbol.ContainingNamespace.ToDisplayString();
+                }
+            }
+            parent = parent.Parent;
+        }
+        return string.Empty;
+    }
+
+    // Returns the ParameterSyntax list for parenthesized or simple lambda forms.
+    private static System.Collections.Generic.IReadOnlyList<ParameterSyntax> GetLambdaParameterSyntaxes(
+        LambdaExpressionSyntax lambda)
+    {
+        if (lambda is ParenthesizedLambdaExpressionSyntax p) return p.ParameterList.Parameters;
+        if (lambda is SimpleLambdaExpressionSyntax s) return new[] { s.Parameter };
+        return Array.Empty<ParameterSyntax>();
+    }
+
+    // Reads a [System.ComponentModel.DescriptionAttribute("...")] value from the lambda's
+    // attribute lists. Lambdas carry no XML doc comments so this is the only way to supply
+    // a description without using McpTool(Name=...) / McpTool(Title=...).
+    private static string? GetDescriptionFromLambdaAttrs(
+        LambdaExpressionSyntax lambda,
+        SemanticModel semanticModel)
+    {
+        foreach (var attrList in lambda.AttributeLists)
+        foreach (var attr in attrList.Attributes)
+        {
+            var symInfo = semanticModel.GetSymbolInfo(attr);
+            var ctor = (symInfo.Symbol ?? symInfo.CandidateSymbols.FirstOrDefault()) as IMethodSymbol;
+            if (ctor?.ContainingType?.ToDisplayString() == "System.ComponentModel.DescriptionAttribute" &&
+                attr.ArgumentList?.Arguments.Count > 0 &&
+                attr.ArgumentList.Arguments[0].Expression is LiteralExpressionSyntax lit)
+            {
+                return lit.Token.ValueText;
+            }
+        }
+        return null;
     }
 
     // ---------------------------------------------------------------------------
