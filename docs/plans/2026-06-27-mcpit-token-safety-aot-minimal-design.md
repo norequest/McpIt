@@ -266,7 +266,26 @@ not supplied. The library stays analyzer-clean by isolating and annotating the r
 - C1 AOT-ready body path (escape-hatch design above) and C2 benchmark + AOT-analyzer harness.
 - D1 OpenTelemetry spans (invoker side), D2 refined `Title` / `OpenWorld` annotations.
 
-### Deferred to Phase 2 / 3
+### Delivered in Phase 2 (same branch)
 
-- Track B minimal APIs (spike in progress), D3 manifest integrity hash, D4 per-tool auth scope,
-  A-stretch validation-constraint schema.
+- Track B minimal APIs, expanded: method-group handlers and `MapGroup` prefix chaining now
+  generate tools. Caveat: inline lambda handlers passed to the real
+  `WebApplication.MapGet(string, Delegate)` overload still do not generate, because Roslyn
+  returns no symbol for a lambda bound to a `Delegate` parameter. The supported rule is "put
+  `[McpTool]` on a named handler method, not an inline lambda." Lambda support resolves only
+  against a generic test stub today.
+- D4 per-tool auth scope: `[McpTool(RequiredScope = "...")]` injects `IHttpContextAccessor`
+  into the generated tool and gates the call via `McpScopeGuard` (matches space-delimited
+  `scope` and `scp` claims), returning a structured JSON error when the scope is absent.
+- D3 tool-manifest integrity hash: a second `[Generator]` emits `McpIt.Generated.McpItManifest`
+  (order-independent SHA-256 `AggregateHash` plus a constant `Json`), served via
+  `app.MapMcpManifest(...)`. It skips tool-less assemblies so it does not collide with a
+  consumer's manifest. V1 fingerprint covers tool name, description, and parameter surface;
+  `NamePrefix`, API-version suffixes, and lambda routes are not yet reflected.
+
+### Deferred to Phase 3
+
+- A-stretch validation-constraint schema (`[Range]`/`[StringLength]`/`[RegularExpression]`/
+  enum to JSON Schema keywords), gated on verifying the SDK schema-builder interaction.
+- Minimal-API lambda handlers against the real `Delegate`-typed overloads; manifest v1
+  derivation gaps (prefix/version/lambda); manifest coverage of minimal-API route identity.
