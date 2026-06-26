@@ -61,7 +61,17 @@ public sealed class McpToolGenerator : IIncrementalGenerator
         // -------------------------------------------------------------------
         // Pipeline 2: minimal-API MapGet/MapPost/MapPut/MapPatch/MapDelete calls
         // where the handler method symbol carries [McpTool].
-        // Only method-group handlers are resolved; lambda handlers are deferred.
+        //
+        // Supported shapes (Phase 2):
+        //   - Method-group: app.MapGet("/route", Handlers.GetItem)
+        //   - Lambda:       app.MapGet("/route", [McpTool] (int id) => ...)
+        //       Requires the Map* stub to use an unconstrained generic THandler (not Delegate)
+        //       so Roslyn's GetSymbolInfo resolves the lambda to an IMethodSymbol. The real
+        //       ASP.NET Core Map* APIs use Delegate and Roslyn cannot resolve the symbol there;
+        //       that case remains unsupported (GetSymbolInfo returns null, filtered silently).
+        //   - MapGroup prefix (direct chain): app.MapGroup("/api").MapGet("/x", H)
+        //   - MapGroup prefix (variable):     var g = app.MapGroup("/api"); g.MapGet("/x", H)
+        //   - Overloaded method groups: first candidate picked deterministically.
         // -------------------------------------------------------------------
         var minimalApiModels = context.SyntaxProvider
             .CreateSyntaxProvider(
@@ -122,28 +132,134 @@ public sealed class McpToolGenerator : IIncrementalGenerator
         if (firstArg is not LiteralExpressionSyntax routeLiteral) return null;
         var route = routeLiteral.Token.ValueText;
 
-        // Second argument is the handler. Try to resolve as a method group.
-        // Lambda handlers are not yet supported (see findings in MinimalApiGeneratorTests.cs).
+        // Resolve any MapGroup prefix by walking the receiver expression chain.
+        var groupPrefix = ResolveGroupPrefixes(invoc, ctx.SemanticModel, ct);
+        var fullRoute = string.IsNullOrEmpty(groupPrefix)
+            ? route
+            : ModelBuilder.CombineRoutes(groupPrefix, route);
+
+        // Resolve the handler method symbol via GetSymbolInfo.
         var handlerArgExpr = invoc.ArgumentList.Arguments[1].Expression;
         var symbolInfo = ctx.SemanticModel.GetSymbolInfo(handlerArgExpr, ct);
 
-        // Use the unambiguous symbol first; fall back to first candidate for non-overloaded groups.
+        // Use the unambiguous symbol first; fall back to first candidate for overloaded groups.
         var handlerMethod = (symbolInfo.Symbol
             ?? symbolInfo.CandidateSymbols.FirstOrDefault()) as IMethodSymbol;
 
         if (handlerMethod is null) return null;
-
-        // Skip anonymous-function symbols (lambdas).
-        // Their compiler-generated names contain angle brackets (e.g. <Register>b__0)
-        // which are not valid C# identifiers in the emitted class name.
-        // Lambda-handler support is deferred to Phase 2.
-        if (handlerMethod.MethodKind == MethodKind.AnonymousFunction) return null;
 
         // Opt-in: the handler must carry [McpTool]; skip anything unmarked.
         var hasMcpTool = handlerMethod.GetAttributes().Any(a =>
             a.AttributeClass?.ToDisplayString() == "McpIt.McpToolAttribute");
         if (!hasMcpTool) return null;
 
-        return ModelBuilder.BuildFromHandler(handlerMethod, verb, route, ctx.SemanticModel.Compilation);
+        // Lambda handler: the compiler-generated name (e.g. "<Register>b__0") contains angle
+        // brackets which are not valid C# identifiers. Derive the class name and tool name hint
+        // from the verb + sanitized route + containing type instead.
+        if (handlerMethod.MethodKind == MethodKind.AnonymousFunction)
+        {
+            var sanitized = SanitizeForIdentifier(fullRoute);
+            var containingName = handlerMethod.ContainingType?.Name ?? "Lambda";
+            var classNameOverride = sanitized.Length > 0
+                ? $"MinApi_{verb}_{sanitized}_{containingName}_Tool"
+                : $"MinApi_{verb}_{containingName}_Tool";
+
+            // Tool name hint: lowercase verb + sanitized route, used when no explicit Name set.
+            var toolNameHint = sanitized.Length > 0
+                ? $"{verb.ToLowerInvariant()}_{sanitized}"
+                : verb.ToLowerInvariant();
+
+            return ModelBuilder.BuildFromHandler(
+                handlerMethod, verb, fullRoute, ctx.SemanticModel.Compilation,
+                classNameOverride, toolNameHint);
+        }
+
+        // Named method-group handler (the common case).
+        return ModelBuilder.BuildFromHandler(handlerMethod, verb, fullRoute, ctx.SemanticModel.Compilation);
+    }
+
+    // ---------------------------------------------------------------------------
+    // MapGroup prefix resolution: walks the receiver expression chain of a Map*
+    // invocation to accumulate any MapGroup("/prefix") calls, returning the
+    // combined prefix string (e.g. "api/v1"). Returns empty string when no
+    // MapGroup is found. Non-literal prefixes (computed values) stop the walk
+    // silently without crashing.
+    //
+    // Handled shapes:
+    //   Direct chain: app.MapGroup("/api").MapGet("/x", H)  -> prefix = "api"
+    //   Variable:     var g = app.MapGroup("/api"); g.MapGet("/x", H) -> prefix = "api"
+    //   Nested:       app.MapGroup("/a").MapGroup("/b").MapGet("/x", H) -> prefix = "a/b"
+    // ---------------------------------------------------------------------------
+    private static string ResolveGroupPrefixes(
+        InvocationExpressionSyntax mapInvoc,
+        SemanticModel semanticModel,
+        System.Threading.CancellationToken ct)
+    {
+        var ma = (MemberAccessExpressionSyntax)mapInvoc.Expression;
+        var prefixes = new System.Collections.Generic.List<string>();
+        CollectGroupPrefixes(ma.Expression, semanticModel, ct, prefixes);
+
+        if (prefixes.Count == 0) return string.Empty;
+
+        // Prefixes are collected innermost-first (closest to the Map* call first),
+        // so reverse to get outermost-first for correct CombineRoutes assembly.
+        prefixes.Reverse();
+
+        var result = string.Empty;
+        foreach (var prefix in prefixes)
+            result = ModelBuilder.CombineRoutes(result, prefix);
+        return result;
+    }
+
+    private static void CollectGroupPrefixes(
+        ExpressionSyntax expr,
+        SemanticModel semanticModel,
+        System.Threading.CancellationToken ct,
+        System.Collections.Generic.List<string> prefixes)
+    {
+        // Direct chain: someExpr.MapGroup("/prefix")
+        if (expr is InvocationExpressionSyntax innerInvoc &&
+            innerInvoc.Expression is MemberAccessExpressionSyntax innerMa &&
+            innerMa.Name.Identifier.Text == "MapGroup")
+        {
+            if (innerInvoc.ArgumentList.Arguments.Count >= 1 &&
+                innerInvoc.ArgumentList.Arguments[0].Expression is LiteralExpressionSyntax prefixLit)
+            {
+                prefixes.Add(prefixLit.Token.ValueText);
+                // Recurse: the receiver of this MapGroup call may itself be another MapGroup.
+                CollectGroupPrefixes(innerMa.Expression, semanticModel, ct, prefixes);
+            }
+            // Non-literal prefix: stop walking; do not crash.
+            return;
+        }
+
+        // Variable reference: look up the local's initializer expression.
+        if (expr is IdentifierNameSyntax identifier)
+        {
+            var sym = semanticModel.GetSymbolInfo(identifier, ct).Symbol;
+            if (sym is ILocalSymbol local)
+            {
+                var declRef = local.DeclaringSyntaxReferences.FirstOrDefault();
+                if (declRef?.GetSyntax(ct) is VariableDeclaratorSyntax declarator &&
+                    declarator.Initializer?.Value is ExpressionSyntax initExpr)
+                {
+                    CollectGroupPrefixes(initExpr, semanticModel, ct, prefixes);
+                }
+            }
+            // Not a resolvable local or no initializer: stop.
+            return;
+        }
+
+        // Other expression types (parameters, properties, etc.): stop walking.
+    }
+
+    // Replaces every run of non-alphanumeric characters with a single '_', then trims
+    // leading and trailing underscores. Used to turn a route template into a valid C#
+    // identifier segment for the lambda-handler generated class name.
+    // Example: "/items/{id}" -> "items_id"
+    private static string SanitizeForIdentifier(string s)
+    {
+        var replaced = System.Text.RegularExpressions.Regex.Replace(s, @"[^a-zA-Z0-9]+", "_");
+        return replaced.Trim('_');
     }
 }

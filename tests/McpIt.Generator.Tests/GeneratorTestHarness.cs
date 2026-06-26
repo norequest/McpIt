@@ -28,6 +28,8 @@ public static class GeneratorTestHarness
             typeof(Microsoft.AspNetCore.Mvc.ApiControllerAttribute),
             typeof(Microsoft.AspNetCore.Mvc.FromBodyAttribute),
             typeof(McpIt.IMcpEndpointInvoker),
+            // Required so generated scope-gated tools that reference IHttpContextAccessor compile.
+            typeof(Microsoft.AspNetCore.Http.IHttpContextAccessor),
         };
 
         var extraRefs = extraTypes

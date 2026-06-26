@@ -1,6 +1,6 @@
-// FINDINGS: Minimal-API support - spike results
+// FINDINGS: Minimal-API support - Phase 2 results
 //
-// SUPPORTED (Phase 1, this file):
+// SUPPORTED (Phase 2, this file):
 //   Shape 1 - Method-group handler:
 //       app.MapGet("/items/{id}", Handlers.GetItem)
 //     where GetItem carries [McpTool]. Resolved cleanly via
@@ -9,36 +9,40 @@
 //     string-literal argument. ParameterClassifier reuses the existing
 //     route-token matching logic unchanged ({id} binds to param named "id").
 //
-// DEFERRED (Phase 2 recommended):
-//   Shape 2 - Lambda with attribute:
-//       app.MapGet("/items", [McpTool] (int id) => ...)
-//     SemanticModel.GetSymbolInfo on a lambda expression returns null (the
-//     lambda has no named symbol at the call site). GetDeclaredSymbol requires
-//     the concrete CSharpSemanticModel overload for AnonymousFunctionExpressionSyntax
-//     which is not reachable via the generic SyntaxNode path in netstandard2.0/
-//     Roslyn 4.8.0. A Phase 2 implementation should: (a) detect the lambda arg
-//     syntactically, (b) cast ctx.SemanticModel to CSharpSemanticModel and call
-//     GetDeclaredSymbol(AnonymousFunctionExpressionSyntax), then (c) check the
-//     resulting IMethodSymbol.GetAttributes() for McpToolAttribute. This is
-//     achievable but requires a CSharpSemanticModel cast that is safe inside an
-//     IIncrementalGenerator running against the C# compiler.
+//   Shape 2 - Lambda handler with attribute (ADDED Phase 2):
+//       app.MapGet("/items/{id}", [McpTool] (int id) => ...)
+//     Works when the Map* method uses an unconstrained generic THandler parameter
+//     (as in the test stub below). In that case GetSymbolInfo returns the lambda
+//     as an IMethodSymbol with MethodKind.AnonymousFunction. The compiler-generated
+//     name (e.g. "<Register>b__0") contains angle brackets that are invalid in a
+//     C# class identifier; Phase 2 fixes this by deriving the class name from
+//     VERB + sanitized(route) + ContainingTypeName (e.g. "MinApi_GET_items_id_AppHost_Tool").
+//     NOTE: when the real ASP.NET Core Map* APIs are used (which take System.Delegate),
+//     GetSymbolInfo returns null for lambda args and the lambda is silently skipped.
+//     In practice, consumers should use named method groups for production tools or
+//     ensure their Map* overload uses a generic type parameter.
 //
-//   MapGroup prefix handling:
-//     app.MapGroup("/api").MapGet("/items", ...)  -- group prefix not followed;
-//     route captured from the innermost MapGet call only. Resolving the full
-//     prefix requires walking the receiver chain through the semantic model,
-//     which adds complexity. Recommended for Phase 2.
+//   MapGroup prefix handling (ADDED Phase 2):
+//     app.MapGroup("/api").MapGet("/items", ...)  -> full route "/api/items"
+//     var g = app.MapGroup("/api"); g.MapGet("/items", H)  -> "/api/items"
+//     Nested groups: app.MapGroup("/a").MapGroup("/b").MapGet("/x", H) -> "/a/b/x"
+//     Non-literal prefix (computed value): walk stops silently; endpoint continues
+//     without a prefix rather than crashing.
+//
+//   Overloaded method-group handlers:
+//     First candidate returned by GetSymbolInfo.CandidateSymbols is picked
+//     deterministically. Fully ambiguous overloads without any candidate are
+//     simply filtered out (no tool emitted).
 //
 // STUB NOTE:
-//   The inline test sources below define stub MapGet/MapPost/etc. extension
-//   methods in the Microsoft.AspNetCore.Builder namespace. This is necessary
-//   because GeneratorTestHarness builds its compilation from
+//   The inline test sources below define stub MapGet/MapPost/etc. and MapGroup
+//   extension methods in the Microsoft.AspNetCore.Builder namespace. This is
+//   necessary because GeneratorTestHarness builds its compilation from
 //   Basic.Reference.Assemblies (BCL only) plus MVC/McpIt assemblies; it does
-//   not include the real Microsoft.AspNetCore.Routing assembly. The stub
-//   reproduces the (this X, string, Delegate) signature that is sufficient for
-//   the generator to see the invocation syntactically and resolve the handler
-//   symbol semantically. Users on real ASP.NET Core apps have the genuine
-//   WebApplication.MapGet and do not need the stub; the generator matches by
+//   not include the real Microsoft.AspNetCore.Routing assembly. The stubs use
+//   unconstrained generic THandler so Roslyn can infer the lambda type for the
+//   lambda handler tests. Users on real ASP.NET Core apps have the genuine
+//   WebApplication.MapGet and do not need stubs; the generator matches by
 //   Map* method name, not by the exact declaring type.
 
 using Microsoft.CodeAnalysis;
@@ -67,6 +71,8 @@ public class MinimalApiGeneratorTests
                 public static void MapPut<THandler>(this IEndpointRouteBuilder b, string p, THandler h) { }
                 public static void MapPatch<THandler>(this IEndpointRouteBuilder b, string p, THandler h) { }
                 public static void MapDelete<THandler>(this IEndpointRouteBuilder b, string p, THandler h) { }
+                // MapGroup returns IEndpointRouteBuilder so chain calls like .MapGet(...) compile.
+                public static IEndpointRouteBuilder MapGroup(this IEndpointRouteBuilder b, string prefix) => b;
             }
         }
         """;
@@ -366,53 +372,165 @@ public class MinimalApiGeneratorTests
     }
 
     // -------------------------------------------------------------------------
-    // Shape 2: lambda handlers -- DEFERRED (see findings at top of file)
-    //
-    // Investigation result: Roslyn's GetSymbolInfo DOES return an anonymous
-    // method IMethodSymbol for a lambda expression. However, the compiler-
-    // generated method name (e.g. "<Register>b__0") contains angle brackets
-    // which make invalid C# class identifiers. The generator therefore skips
-    // MethodKind.AnonymousFunction symbols explicitly (Phase 2 should sanitize
-    // the name or use a different naming strategy for lambda handlers).
-    //
-    // This test guards the "not emitted" behavior. Phase 2 will replace it.
+    // Shape 2: lambda handlers (Phase 2 -- replaces the former "deferred" test)
     // -------------------------------------------------------------------------
 
     [Fact]
-    public void LambdaHandler_WithMcpToolAttribute_NotEmitted_Deferred()
+    public void LambdaHandler_WithMcpToolAttribute_EmitsTool()
     {
         // The [McpTool] attribute here is on the lambda, not on a named method.
-        // The generator explicitly skips MethodKind.AnonymousFunction symbols to
-        // avoid emitting classes with angle-bracket names like
-        // "MinApi_AppHost_<Register>b__0_Tool" which do not compile.
-        const string src = """
-            using McpIt;
-            using Microsoft.AspNetCore.Builder;
-
-            namespace Demo
-            {
-                public class AppHost : IEndpointRouteBuilder
-                {
-                    public void Register(IEndpointRouteBuilder app)
-                    {
-                        app.MapGet("/items/{id}", [McpTool] (int id) => id.ToString());
-                    }
-                }
-            }
-
-            namespace Microsoft.AspNetCore.Builder
-            {
-                public interface IEndpointRouteBuilder { }
-                public static class MinimalApiStubExtensions
-                {
-                    public static void MapGet<THandler>(this IEndpointRouteBuilder b, string p, THandler h) { }
-                }
-            }
-            """;
+        // Phase 2 fix: class name is derived from VERB + sanitized route + containing type,
+        // avoiding the compiler-generated angle-bracket name ("MinApi_GET_items_id_AppHost_Tool").
+        var src = Wrap(
+            handlers: string.Empty,
+            registrations: """
+                /// <summary>Gets an item.</summary>
+                app.MapGet("/items/{id}", [McpTool] (int id) => id.ToString());
+                """);
 
         var result = GeneratorTestHarness.Run(src);
 
-        // Lambda tools are NOT emitted in Phase 1. Phase 2 will update this test.
+        var errors = result.CompilationDiagnostics
+            .Where(d => d.Severity == DiagnosticSeverity.Error)
+            .ToList();
+        Assert.True(errors.Count == 0,
+            "Unexpected errors: " + string.Join("; ", errors.Select(e => e.Id + " " + e.GetMessage())));
+        Assert.Contains("McpServerToolType", result.AllGeneratedSource);
+        // Class name must be a valid C# identifier (no angle brackets).
+        Assert.Contains("MinApi_GET_items_id_AppHost_Tool", result.AllGeneratedSource);
+        Assert.Contains("\"GET\"", result.AllGeneratedSource);
+        Assert.Contains("items/{id}", result.AllGeneratedSource);
+    }
+
+    [Fact]
+    public void LambdaHandler_DerivedToolName_FromRouteAndVerb()
+    {
+        var src = Wrap(
+            handlers: string.Empty,
+            registrations: """
+                /// <summary>Lists all items.</summary>
+                app.MapGet("/items", [McpTool] () => "ok");
+                """);
+
+        var result = GeneratorTestHarness.Run(src);
+
+        // Tool name hint is "get_items" when no explicit Name is provided.
+        Assert.Contains("get_items", result.AllGeneratedSource);
+    }
+
+    [Fact]
+    public void LambdaHandler_ExplicitToolName_UsedVerbatim()
+    {
+        var src = Wrap(
+            handlers: string.Empty,
+            registrations: """
+                /// <summary>Gets items.</summary>
+                app.MapGet("/items", [McpTool(Name = "fetchItems")] () => "ok");
+                """);
+
+        var result = GeneratorTestHarness.Run(src);
+
+        Assert.Contains("fetchItems", result.AllGeneratedSource);
+    }
+
+    [Fact]
+    public void LambdaHandler_RouteParam_ClassifiedCorrectly()
+    {
+        var src = Wrap(
+            handlers: string.Empty,
+            registrations: """
+                /// <summary>Gets an item.</summary>
+                app.MapGet("/items/{id}", [McpTool] (int id, string? expand) => id.ToString());
+                """);
+
+        var result = GeneratorTestHarness.Run(src);
+
+        Assert.Contains("param id -> ParameterSource.Route", result.AllGeneratedSource);
+        Assert.Contains("param expand -> ParameterSource.Query", result.AllGeneratedSource);
+    }
+
+    [Fact]
+    public void LambdaHandler_WithoutMcpToolAttribute_NotEmitted()
+    {
+        var src = Wrap(
+            handlers: string.Empty,
+            registrations: """app.MapGet("/items/{id}", (int id) => id.ToString());""");
+
+        var result = GeneratorTestHarness.Run(src);
+
         Assert.DoesNotContain("McpServerToolType", result.AllGeneratedSource);
+    }
+
+    // -------------------------------------------------------------------------
+    // MapGroup prefix chaining (Phase 2)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void MapGroup_DirectChain_PrependsPrefixToRoute()
+    {
+        var src = Wrap(
+            handlers: """
+                public static class Handlers
+                {
+                    /// <summary>Gets an item.</summary>
+                    [McpTool]
+                    public static string GetItem(int id) => "ok";
+                }
+                """,
+            registrations: """app.MapGroup("/api").MapGet("/items/{id}", Handlers.GetItem);""");
+
+        var result = GeneratorTestHarness.Run(src);
+
+        var errors = result.CompilationDiagnostics
+            .Where(d => d.Severity == DiagnosticSeverity.Error)
+            .ToList();
+        Assert.True(errors.Count == 0,
+            "Unexpected errors: " + string.Join("; ", errors.Select(e => e.Id + " " + e.GetMessage())));
+        // Full route must include the group prefix.
+        Assert.Contains("api/items/{id}", result.AllGeneratedSource);
+        Assert.Contains("McpServerToolType", result.AllGeneratedSource);
+    }
+
+    [Fact]
+    public void MapGroup_VariableAssignment_PrependsPrefixToRoute()
+    {
+        var src = Wrap(
+            handlers: """
+                public static class Handlers
+                {
+                    /// <summary>Lists items.</summary>
+                    [McpTool]
+                    public static string ListItems() => "ok";
+                }
+                """,
+            registrations: """
+                var g = app.MapGroup("/api");
+                g.MapGet("/items", Handlers.ListItems);
+                """);
+
+        var result = GeneratorTestHarness.Run(src);
+
+        Assert.Contains("api/items", result.AllGeneratedSource);
+    }
+
+    [Fact]
+    public void MapGroup_NoGroup_RouteIsUnchanged()
+    {
+        var src = Wrap(
+            handlers: """
+                public static class Handlers
+                {
+                    /// <summary>Gets an item.</summary>
+                    [McpTool]
+                    public static string GetItem(int id) => "ok";
+                }
+                """,
+            registrations: """app.MapGet("/items/{id}", Handlers.GetItem);""");
+
+        var result = GeneratorTestHarness.Run(src);
+
+        // Without MapGroup the route should be the bare path, not prefixed.
+        Assert.Contains("items/{id}", result.AllGeneratedSource);
+        Assert.DoesNotContain("api/items", result.AllGeneratedSource);
     }
 }

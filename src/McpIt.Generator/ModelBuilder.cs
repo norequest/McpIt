@@ -81,6 +81,9 @@ public static class ModelBuilder
             ? DeriveTitle(method.Name)
             : explicitTitle!;
 
+        var requiredScope = mcpAttr?.NamedArguments
+            .FirstOrDefault(kv => kv.Key == "RequiredScope").Value.Value as string;
+
         var paramDescriptions = GetXmlParamDescriptions(method);
 
         var cancellationTokenType = ctx.SemanticModel.Compilation
@@ -113,7 +116,8 @@ public static class ModelBuilder
             OutputFields: new EquatableArray<string>(outputFields),
             OutputMaxItems: outputMaxItems,
             Title: title,
-            Location: LocationInfo.From(method.Locations.FirstOrDefault() ?? Location.None));
+            Location: LocationInfo.From(method.Locations.FirstOrDefault() ?? Location.None),
+            RequiredScope: requiredScope);
     }
 
     private static bool IsCancellationToken(ITypeSymbol type, INamedTypeSymbol? cancellationTokenType)
@@ -236,7 +240,8 @@ public static class ModelBuilder
         return string.Empty;
     }
 
-    private static string CombineRoutes(string prefix, string suffix)
+    // Internal so McpToolGenerator can reuse it for MapGroup prefix assembly.
+    internal static string CombineRoutes(string prefix, string suffix)
     {
         prefix = prefix.Trim('/');
         suffix = suffix.Trim('/');
@@ -382,11 +387,18 @@ public static class ModelBuilder
     // The handler MUST carry [McpIt.McpToolAttribute]; callers should verify this
     // before calling, but the method also checks and returns null if absent.
     // ---------------------------------------------------------------------------
+    // classNameOverride: when provided (e.g. for lambda handlers with invalid compiler-generated
+    //   names), this value is used verbatim instead of the auto-derived "MinApi_Type_Method_Tool".
+    // toolNameHint: when provided and no explicit McpTool(Name=...) is set, this value is used
+    //   as the MCP tool name instead of the auto-derived camelCase method name. Useful for lambda
+    //   handlers whose compiler-generated names are not meaningful.
     public static EndpointModel? BuildFromHandler(
         IMethodSymbol handler,
         string verb,
         string route,
-        Compilation compilation)
+        Compilation compilation,
+        string? classNameOverride = null,
+        string? toolNameHint = null)
     {
         var mcpAttr = handler.GetAttributes().FirstOrDefault(a =>
             a.AttributeClass?.ToDisplayString() == "McpIt.McpToolAttribute");
@@ -396,13 +408,16 @@ public static class ModelBuilder
             ? string.Empty
             : handler.ContainingType.ContainingNamespace.ToDisplayString();
 
-        // Prefix avoids hint-name collisions with a same-named controller tool.
-        var className = $"MinApi_{handler.ContainingType.Name}_{handler.Name}_Tool";
+        // classNameOverride is used for lambda handlers (compiler-generated names are not valid
+        // C# identifiers). For method-group handlers the name is derived from the type and method.
+        var className = classNameOverride ?? $"MinApi_{handler.ContainingType.Name}_{handler.Name}_Tool";
 
         var explicitName = mcpAttr.NamedArguments
             .FirstOrDefault(kv => kv.Key == "Name").Value.Value as string;
+        // toolNameHint is the route-derived fallback for lambda handlers; it is only used when
+        // no explicit Name is provided.
         var toolName = string.IsNullOrWhiteSpace(explicitName)
-            ? ToCamelCase(handler.Name)
+            ? (toolNameHint ?? ToCamelCase(handler.Name))
             : explicitName!;
 
         var allowDestructive = mcpAttr.NamedArguments
@@ -417,6 +432,9 @@ public static class ModelBuilder
         var title = string.IsNullOrWhiteSpace(explicitTitle)
             ? DeriveTitle(handler.Name)
             : explicitTitle!;
+
+        var requiredScope = mcpAttr.NamedArguments
+            .FirstOrDefault(kv => kv.Key == "RequiredScope").Value.Value as string;
 
         var paramDescriptions = GetXmlParamDescriptions(handler);
         var cancellationTokenType = compilation.GetTypeByMetadataName("System.Threading.CancellationToken");
@@ -448,6 +466,7 @@ public static class ModelBuilder
             OutputFields: new EquatableArray<string>(outputFields),
             OutputMaxItems: outputMaxItems,
             Title: title,
-            Location: LocationInfo.From(handler.Locations.FirstOrDefault() ?? Location.None));
+            Location: LocationInfo.From(handler.Locations.FirstOrDefault() ?? Location.None),
+            RequiredScope: requiredScope);
     }
 }

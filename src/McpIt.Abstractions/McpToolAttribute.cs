@@ -50,4 +50,12 @@ public sealed class McpToolAttribute : Attribute
     /// verbatim). When placed on a method, this property is ignored.
     /// </summary>
     public string? NamePrefix { get; set; }
+
+    /// <summary>
+    /// When set, the generated tool verifies the caller's <see cref="System.Security.Claims.ClaimsPrincipal"/>
+    /// carries this OAuth scope before the loopback call, returning a structured JSON error otherwise.
+    /// Scope matching checks a space-delimited <c>scope</c> claim (OAuth convention) and
+    /// individual <c>scp</c> or <c>scope</c> claims. Works for both controller and minimal-API tools.
+    /// </summary>
+    public string? RequiredScope { get; set; }
 }

@@ -26,7 +26,8 @@ public sealed record EndpointModel(
     EquatableArray<string> OutputFields,
     int? OutputMaxItems,
     string? Title,
-    LocationInfo? Location)
+    LocationInfo? Location,
+    string? RequiredScope = null)
 {
     public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
 

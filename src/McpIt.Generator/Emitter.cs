@@ -47,6 +47,13 @@ public static class Emitter
     private static string BuildMethodBody(EndpointModel model, string routeBuild, string queryBuild, string bodyObjectBuild, string bodyTypeBuild)
     {
         var allParams = new List<string> { "global::McpIt.IMcpEndpointInvoker invoker" };
+
+        // Scope-gated tools receive IHttpContextAccessor as the second DI parameter so the
+        // guard can inspect the caller's ClaimsPrincipal. Tools without RequiredScope get no
+        // additional parameter and no guard check -- their emitted code is identical to today.
+        if (model.RequiredScope is not null)
+            allParams.Add("global::Microsoft.AspNetCore.Http.IHttpContextAccessor httpContextAccessor");
+
         allParams.AddRange(model.Parameters.Select(p =>
         {
             var decl = $"{p.TypeFullyQualified} {p.Name}";
@@ -57,6 +64,49 @@ public static class Emitter
         allParams.Add("global::System.Threading.CancellationToken cancellationToken = default");
         var paramList = string.Join(",\n            ", allParams);
 
+        // --- Scope-gated path: always async Task<string> ---
+        // The guard check returns a string directly; async lets us freely mix the guard's
+        // synchronous return with the awaited invoker call, and handles both shaping variants.
+        if (model.RequiredScope is not null)
+        {
+            var escapedScope = Escape(model.RequiredScope);
+            var escapedToolName = Escape(model.ToolName);
+            string invokeAndReturn;
+            if (model.HasOutputShaping)
+            {
+                var maxLengthExpr = model.OutputMaxLength.HasValue
+                    ? model.OutputMaxLength.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : "null";
+                var fieldsExpr = model.OutputFields.Count > 0
+                    ? "new string[] { " + string.Join(", ", model.OutputFields.Select(f => "\"" + Escape(f) + "\"")) + " }"
+                    : "null";
+                var maxItemsExpr = model.OutputMaxItems.HasValue
+                    ? model.OutputMaxItems.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : "null";
+                invokeAndReturn =
+                    $"var __r = await invoker.InvokeAsync(\"{model.HttpMethod}\", __path, __query, {bodyObjectBuild}, {bodyTypeBuild}, cancellationToken);\n" +
+                    $"        return global::McpIt.OutputShaper.Shape(__r, {maxLengthExpr}, {fieldsExpr}, {maxItemsExpr});";
+            }
+            else
+            {
+                invokeAndReturn =
+                    $"return await invoker.InvokeAsync(\"{model.HttpMethod}\", __path, __query, {bodyObjectBuild}, {bodyTypeBuild}, cancellationToken);";
+            }
+
+            return $$"""
+                public static async global::System.Threading.Tasks.Task<string> Invoke(
+                        {{paramList}})
+                    {
+                        if (!global::McpIt.McpScopeGuard.HasScope(httpContextAccessor, "{{escapedScope}}"))
+                            return global::McpIt.McpScopeGuard.Denied("{{escapedToolName}}", "{{escapedScope}}");
+                        string __path = {{routeBuild}};
+                        string? __query = {{queryBuild}};
+                        {{invokeAndReturn}}
+                    }
+                """;
+        }
+
+        // --- Non-scope-gated path: output shaping variant (async) ---
         if (model.HasOutputShaping)
         {
             var maxLengthExpr = model.OutputMaxLength.HasValue
@@ -81,6 +131,7 @@ public static class Emitter
                 """;
         }
 
+        // --- Non-scope-gated path: plain Task<string> expression body ---
         return $$"""
             public static global::System.Threading.Tasks.Task<string> Invoke(
                     {{paramList}})
