@@ -238,3 +238,35 @@ schema-builder interaction.
 - Backward compatibility: all new attribute members are additive and default to today's
   behavior. Existing generated output for existing inputs must not change except for the
   (now context-backed) body call and the additive activity wrap.
+
+---
+
+## Implementation notes and findings (2026-06-27)
+
+### C1 correction: source generators cannot feed STJ's generator
+
+The original C1 plan (emit a `[JsonSerializable]` partial `JsonSerializerContext` for McpIt to
+have System.Text.Json's own source generator fill in) does not work. Roslyn source generators
+all run against the same input compilation and cannot see each other's emitted sources within a
+pass, so STJ's generator never observes a context McpIt emits. There is also no fully
+trim/AOT-clean `JsonSerializer` overload that generated code can call without naming a concrete
+`JsonTypeInfo<T>`, which would require the consumer's context type to be known at emit time.
+
+Conclusion: truly zero-config AOT body serialization is not achievable from the generator alone.
+The delivered design is the honest escape hatch, which is also what the official MCP SDK itself
+requires for AOT: generated code carries no `JsonSerializer` call and passes `(object body,
+Type bodyType)` to the invoker; `McpEndpointsOptions.SerializerOptions` lets the consumer supply
+a source-generated context so the body path is reflection-free, with a reflective fallback when
+not supplied. The library stays analyzer-clean by isolating and annotating the reflective branch.
+
+### Delivered in 1.4.0 (this branch)
+
+- A1 nested/array field projection, A2 `MaxItems` capping (runtime + generator).
+- A3 per-parameter descriptions from XML `<param>` docs into the input schema.
+- C1 AOT-ready body path (escape-hatch design above) and C2 benchmark + AOT-analyzer harness.
+- D1 OpenTelemetry spans (invoker side), D2 refined `Title` / `OpenWorld` annotations.
+
+### Deferred to Phase 2 / 3
+
+- Track B minimal APIs (spike in progress), D3 manifest integrity hash, D4 per-tool auth scope,
+  A-stretch validation-constraint schema.

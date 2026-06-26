@@ -124,18 +124,22 @@ The only comparable library, `Api.ToMcp`, performs an internal HTTP self-call at
 
 - **Controllers and minimal APIs.** Mark a controller action or a minimal-API endpoint with `[McpTool]` to opt it in. Exposure is opt-in: only annotated endpoints become tools.
 - **Tool names.** `[McpTool]` derives a camelCase name from the method, or set `Name` explicitly. Placed on a controller class, `[McpTool]` sets defaults (such as `NamePrefix`) for that class's annotated actions without exposing anything on its own.
-- **Output shaping with `[McpToolOutput]`.** Keep responses lean. `Fields` projects the response down to the top-level JSON properties you list (per object, or per array element), and `MaxLength` truncates the result. Shaping is best-effort: malformed JSON passes through untouched.
+- **Output shaping with `[McpToolOutput]`.** Keep responses lean. `Fields` projects the response to the JSON properties you list: top-level names, dot paths (`"customer.name"` drills into a nested object), and array markers (`"lines[].sku"` projects each array element down to that sub-property). `MaxItems` caps array elements. `MaxLength` truncates the final result. Shaping order: project, cap, truncate. Malformed JSON passes through untouched.
 
   ```csharp
-  [HttpGet("{id}")]
-  [McpTool]
-  [McpToolOutput(Fields = new[] { "id", "status" }, MaxLength = 500)]
-  public Order GetOrder(int id) { ... }
+  [HttpGet("{id}/lines")]
+  [McpTool(Name = "getOrderLines", Title = "Order Lines")]
+  [McpToolOutput(Fields = new[] { "id", "customer.name", "lines[].sku" }, MaxItems = 20, MaxLength = 2000)]
+  public ActionResult<OrderDetail> GetOrderLines(int id, [FromQuery] int maxLines = 10) { ... }
   ```
 
 - **Safety hints from HTTP verbs.** MCP tool annotations are derived from the verb: GET and HEAD are read-only and idempotent; POST, PUT, PATCH, and DELETE are flagged destructive (PUT and DELETE also idempotent). Exposing a destructive operation raises a build warning until you acknowledge it with `[McpTool(AllowDestructive = true)]`.
 - **MCPGEN diagnostics.** Build-time warnings keep your tool surface honest: `MCPGEN001` when a tool has no description, `MCPGEN002` when a destructive operation is exposed without acknowledgement, `MCPGEN003` when a versioned route token is present but no API version can be resolved.
 - **API versioning.** URL-segment versioning (`Asp.Versioning` and the legacy `Microsoft.AspNetCore.Mvc.Versioning`) works out of the box. No changes to your controllers are required; see the [API versioning](#api-versioning) section below.
+- **Per-parameter descriptions.** XML `<param name="x">...</param>` doc comments on a `[McpTool]` action are emitted as `[Description]` on the generated tool's input parameters and surfaced in the MCP `inputSchema`, so agents see them alongside the type and required/optional flag.
+- **Tool `Title`.** `[McpTool(Title = "Friendly Name")]` sets the MCP tool `title` field that clients may show in their UI instead of the raw tool name. Without it, McpIt derives a title from the method name.
+- **OpenTelemetry spans.** McpIt emits spans from an `ActivitySource` named `"McpIt"` around every loopback call. Wire any OTel exporter with `.AddSource("McpIt")`; no extra packages needed.
+- **AOT-ready body serialization.** Provide a `JsonSerializerContext` via `AddMcpEndpoints(o => o.SerializerOptions = ...)` to make the loopback request-body path reflection-free. Omitting it falls back to reflective serialization.
 - **Token-cost report.** The `mcp-token-report` tool measures what your tool list costs the model and can fail a CI build over a budget (see below).
 
 ---
@@ -226,6 +230,96 @@ mcp-token-report http://localhost:5199/mcp --budget 2000   # exit 1 if over budg
 ```
 
 Token counts use an offline heuristic tokenizer (estimates, not exact billing): ideal for comparing tools and catching bloat.
+
+---
+
+## Nested and array field projection
+
+`[McpToolOutput(Fields = ...)]` accepts dot paths and array markers in addition to top-level property names.
+
+- **Dot path** (`"customer.name"`): drills into a nested object and keeps only that leaf.
+- **Array marker** (`"lines[].sku"`): projects every element of an array down to the named sub-property.
+- **`MaxItems`**: caps how many array elements survive projection before `MaxLength` truncation.
+
+Shaping order: project fields, cap items, truncate length.
+
+```csharp
+[HttpGet("{id}/lines")]
+[McpTool(Name = "getOrderLines", Title = "Order Lines")]
+[McpToolOutput(
+    Fields = new[] { "id", "customer.name", "lines[].sku" },
+    MaxItems = 20,
+    MaxLength = 2000)]
+public ActionResult<OrderDetail> GetOrderLines(int id, [FromQuery] int maxLines = 10) { ... }
+```
+
+Given a response like `{ "id": 1, "customer": { "name": "Ada", "email": "..." }, "lines": [{ "sku": "A1", "qty": 2 }] }`, the projected output is `{ "id": 1, "customer": { "name": "Ada" }, "lines": [{ "sku": "A1" }] }`. The `email` and `qty` fields never reach the model.
+
+---
+
+## Per-parameter descriptions
+
+XML `<param name="...">` doc comments on a `[McpTool]` action are emitted as `[Description]` attributes on the generated tool's input parameters and surfaced in the MCP `inputSchema` description field, so agents see them alongside the type and required/optional flag.
+
+```csharp
+/// <summary>Gets the full detail of a single order by its id.</summary>
+/// <param name="id">The numeric order id to look up.</param>
+[HttpGet("{id}")]
+[McpTool(Name = "getOrder", Title = "Get Order by ID")]
+public ActionResult<Order> GetOrderDetail(int id) { ... }
+```
+
+The `<summary>` becomes the tool-level description. Each `<param>` tag becomes the matching parameter description. Both are optional but recommended for agent-facing tools.
+
+---
+
+## Tool Title
+
+`[McpTool(Title = "Friendly Name")]` sets the MCP tool `title` field that clients may display in their UI instead of the raw tool name. Without a `Title`, McpIt derives one from the method name in title case. All generated tools emit `openWorld: false`.
+
+```csharp
+[McpTool(Name = "getOrder", Title = "Get Order by ID")]
+```
+
+---
+
+## OpenTelemetry
+
+McpIt emits spans from an `ActivitySource` named `"McpIt"` around every loopback call. The span name is `"mcpit.endpoint.invoke"`. Three semantic-convention tags are attached: `http.request.method`, `url.path` (path only, no query string), and `http.response.status_code`. When `ThrowOnUnsuccessfulResponse` is enabled, a non-2xx response also sets the span status to `Error`.
+
+Wire any OpenTelemetry exporter that subscribes to the `"McpIt"` source:
+
+```csharp
+// Add the OpenTelemetry.Extensions.Hosting package and any exporter of your choice,
+// then subscribe to the "McpIt" ActivitySource:
+// builder.Services.AddOpenTelemetry()
+//     .WithTracing(t => t.AddSource("McpIt"));
+```
+
+No McpIt-specific packages are required. The `ActivitySource` is always present and is a no-op when no listener is attached, so there is no overhead in apps that do not use OpenTelemetry.
+
+---
+
+## AOT-ready body serialization
+
+By default, when a generated tool needs to POST a `[FromBody]` payload to an endpoint, McpIt serializes it with reflective `System.Text.Json`. For Native-AOT or fully trimmed apps, supply a `JsonSerializerContext` via `SerializerOptions`:
+
+```csharp
+// In Program.cs:
+builder.Services.AddMcpEndpoints(o =>
+{
+    o.SerializerOptions = new System.Text.Json.JsonSerializerOptions
+    {
+        TypeInfoResolver = SampleJsonContext.Default
+    };
+});
+
+// Declare the context once with one [JsonSerializable] line per [FromBody] type:
+[JsonSerializable(typeof(AddNoteRequest))]
+internal partial class SampleJsonContext : JsonSerializerContext { }
+```
+
+When `SerializerOptions` is set, the loopback request-body path calls `GetTypeInfo(bodyType)` instead of `JsonSerializer.Serialize` with reflection, making it Native-AOT and trim safe. Omitting `SerializerOptions` falls back to reflective serialization with no other changes required (zero-config default).
 
 ---
 

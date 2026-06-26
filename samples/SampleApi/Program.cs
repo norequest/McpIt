@@ -1,4 +1,5 @@
 using McpIt;
+using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,9 +14,27 @@ builder.Services.AddMcpServer()
     .WithHttpTransport(options => options.Stateless = true)
     .WithToolsFromAssembly();
 
-// The generated tools loop back to this app's own endpoints. The base address is
-// detected automatically from each incoming MCP request, so no URL is configured here.
-builder.Services.AddMcpEndpoints();
+// AOT-ready body serialization: supplying a JsonSerializerContext makes the loopback
+// request-body path reflection-free and Native-AOT / trim safe. Omitting SerializerOptions
+// falls back to reflective serialization with no other changes required (zero-config).
+builder.Services.AddMcpEndpoints(o =>
+{
+    o.SerializerOptions = new System.Text.Json.JsonSerializerOptions
+    {
+        TypeInfoResolver = SampleApi.SampleJsonContext.Default
+    };
+});
+
+// OpenTelemetry: McpIt emits spans from an ActivitySource named "McpIt" around every
+// loopback call (span name "mcpit.endpoint.invoke"). Wire any OTel exporter you already
+// use by subscribing to the "McpIt" source:
+//
+// builder.Services.AddOpenTelemetry()
+//     .WithTracing(t => t.AddSource("McpIt"));
+//
+// Tags on each span: http.request.method, url.path, http.response.status_code.
+// No McpIt-specific packages are needed; the ActivitySource is always present and is a
+// no-op when no listener is attached.
 
 var app = builder.Build();
 
@@ -35,4 +54,10 @@ app.Run();
 namespace SampleApi
 {
     public partial class Program { }
+
+    // SampleJsonContext makes the loopback request-body serialization reflection-free.
+    // Add one [JsonSerializable(typeof(...))] line for every [FromBody] type in the project.
+    // This covers the addOrderNote tool, whose body is AddNoteRequest.
+    [JsonSerializable(typeof(SampleApi.Controllers.AddNoteRequest))]
+    internal partial class SampleJsonContext : JsonSerializerContext { }
 }
