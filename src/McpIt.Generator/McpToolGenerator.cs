@@ -146,7 +146,33 @@ public sealed class McpToolGenerator : IIncrementalGenerator
         var handlerMethod = (symbolInfo.Symbol
             ?? symbolInfo.CandidateSymbols.FirstOrDefault()) as IMethodSymbol;
 
-        if (handlerMethod is null) return null;
+        if (handlerMethod is null)
+        {
+            // GetSymbolInfo returned null. The most common cause is that the Map* overload
+            // uses System.Delegate as the handler parameter type (the real ASP.NET Core
+            // shape), which prevents Roslyn from resolving the lambda to an IMethodSymbol.
+            // Attempt to build the model directly from the lambda syntax instead.
+            LambdaExpressionSyntax? lambdaSyntax = handlerArgExpr switch
+            {
+                ParenthesizedLambdaExpressionSyntax p => p,
+                SimpleLambdaExpressionSyntax s => s,
+                _ => null
+            };
+            if (lambdaSyntax is null) return null;
+
+            var sanitized = SanitizeForIdentifier(fullRoute);
+            var containingName = GetContainingTypeNameFromSyntax(lambdaSyntax);
+            var classNameOverride = sanitized.Length > 0
+                ? $"MinApi_{verb}_{sanitized}_{containingName}_Tool"
+                : $"MinApi_{verb}_{containingName}_Tool";
+            var toolNameHint = sanitized.Length > 0
+                ? $"{verb.ToLowerInvariant()}_{sanitized}"
+                : verb.ToLowerInvariant();
+
+            return ModelBuilder.BuildFromLambda(
+                lambdaSyntax, verb, fullRoute, ctx.SemanticModel, ctx.SemanticModel.Compilation,
+                classNameOverride, toolNameHint, ct);
+        }
 
         // Opt-in: the handler must carry [McpTool]; skip anything unmarked.
         var hasMcpTool = handlerMethod.GetAttributes().Any(a =>
@@ -261,5 +287,21 @@ public sealed class McpToolGenerator : IIncrementalGenerator
     {
         var replaced = System.Text.RegularExpressions.Regex.Replace(s, @"[^a-zA-Z0-9]+", "_");
         return replaced.Trim('_');
+    }
+
+    // Walks the syntax tree upward from the given node to locate the first enclosing type
+    // declaration (class, struct, or record). Returns its simple name, or "Lambda" when no
+    // enclosing type is found. Used to produce a meaningful generated class name for inline
+    // lambda handlers that have no method name.
+    private static string GetContainingTypeNameFromSyntax(SyntaxNode node)
+    {
+        var parent = node.Parent;
+        while (parent is not null)
+        {
+            if (parent is TypeDeclarationSyntax typeDecl)
+                return typeDecl.Identifier.Text;
+            parent = parent.Parent;
+        }
+        return "Lambda";
     }
 }
