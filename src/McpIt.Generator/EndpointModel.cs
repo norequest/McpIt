@@ -7,7 +7,8 @@ public enum ParameterSource { Route, Query, Body }
 public sealed record ParameterModel(
     string Name,
     string TypeFullyQualified,
-    ParameterSource Source);
+    ParameterSource Source,
+    string? Description = null);
 
 public sealed record EndpointModel(
     string Namespace,
@@ -23,9 +24,11 @@ public sealed record EndpointModel(
     bool AllowDestructive,
     int? OutputMaxLength,
     EquatableArray<string> OutputFields,
+    int? OutputMaxItems,
+    string? Title,
     LocationInfo? Location)
 {
     public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
 
-    public bool HasOutputShaping => OutputMaxLength.HasValue || OutputFields.Count > 0;
+    public bool HasOutputShaping => OutputMaxLength.HasValue || OutputFields.Count > 0 || OutputMaxItems.HasValue;
 }

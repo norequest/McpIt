@@ -36,6 +36,13 @@ public sealed class McpToolAttribute : Attribute
     public bool AllowDestructive { get; set; }
 
     /// <summary>
+    /// Optional human-friendly display title for the tool. When null, a title is derived
+    /// automatically from the method name by splitting on PascalCase word boundaries
+    /// (for example, "GetOrderById" becomes "Get Order By Id").
+    /// </summary>
+    public string? Title { get; set; }
+
+    /// <summary>
     /// Only applies when the attribute is placed on a controller <b>class</b>.
     /// Prepended to the derived (camelCase method-name) tool name of each
     /// <c>[McpTool]</c>-annotated action in that class. It is not applied when an

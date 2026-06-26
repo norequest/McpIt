@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Text;
 using System.Threading;
@@ -37,6 +38,18 @@ public sealed class HttpClientMcpEndpointInvoker : IMcpEndpointInvoker
         if (!string.IsNullOrEmpty(queryString))
             url += "?" + queryString;
 
+        // Start an activity around the loopback call. StartActivity returns null when no
+        // listener is attached, so this path is zero-cost in production when tracing is off.
+        using var activity = McpItActivitySource.Source.StartActivity(
+            "mcpit.endpoint.invoke", ActivityKind.Client);
+
+        if (activity is not null)
+        {
+            activity.SetTag("http.request.method", httpMethod);
+            // Include only the path (not query string or base URL) to avoid exposing secrets.
+            activity.SetTag("url.path", "/" + path);
+        }
+
         using var request = new HttpRequestMessage(new HttpMethod(httpMethod), url);
         if (jsonBody is not null)
             request.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
@@ -46,8 +59,13 @@ public sealed class HttpClientMcpEndpointInvoker : IMcpEndpointInvoker
         using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
         var content = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
+        activity?.SetTag("http.response.status_code", (int)response.StatusCode);
+
         if (_options.ThrowOnUnsuccessfulResponse && !response.IsSuccessStatusCode)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, $"HTTP {(int)response.StatusCode}");
             throw new McpEndpointInvocationException(httpMethod, url, (int)response.StatusCode, content);
+        }
 
         return content;
     }

@@ -68,14 +68,28 @@ public static class ModelBuilder
 
         var (readOnly, destructive, idempotent) = DeriveSafety(httpMethod);
 
-        var (outputMaxLength, outputFields) = GetOutputShaping(method);
+        var (outputMaxLength, outputFields, outputMaxItems) = GetOutputShaping(method);
+
+        var explicitTitle = mcpAttr?.NamedArguments
+            .FirstOrDefault(kv => kv.Key == "Title").Value.Value as string;
+        var title = string.IsNullOrWhiteSpace(explicitTitle)
+            ? DeriveTitle(method.Name)
+            : explicitTitle!;
+
+        var paramDescriptions = GetXmlParamDescriptions(method);
 
         var cancellationTokenType = ctx.SemanticModel.Compilation
             .GetTypeByMetadataName("System.Threading.CancellationToken");
 
         var parameters = method.Parameters
             .Where(p => !IsCancellationToken(p.Type, cancellationTokenType))
-            .Select(p => ParameterClassifier.Classify(p, route))
+            .Select(p =>
+            {
+                var model = ParameterClassifier.Classify(p, route);
+                if (paramDescriptions.TryGetValue(p.Name, out var desc) && !string.IsNullOrWhiteSpace(desc))
+                    model = model with { Description = desc };
+                return model;
+            })
             .ToArray();
 
         return new EndpointModel(
@@ -92,6 +106,8 @@ public static class ModelBuilder
             AllowDestructive: allowDestructive,
             OutputMaxLength: outputMaxLength,
             OutputFields: new EquatableArray<string>(outputFields),
+            OutputMaxItems: outputMaxItems,
+            Title: title,
             Location: LocationInfo.From(method.Locations.FirstOrDefault() ?? Location.None));
     }
 
@@ -120,12 +136,12 @@ public static class ModelBuilder
         _ => (false, false, false),
     };
 
-    private static (int? MaxLength, string[] Fields) GetOutputShaping(IMethodSymbol method)
+    private static (int? MaxLength, string[] Fields, int? MaxItems) GetOutputShaping(IMethodSymbol method)
     {
         var attr = method.GetAttributes().FirstOrDefault(a =>
             a.AttributeClass?.ToDisplayString() == "McpIt.McpToolOutputAttribute");
         if (attr is null)
-            return (null, []);
+            return (null, [], null);
 
         int? maxLength = null;
         var maxArg = attr.NamedArguments.FirstOrDefault(kv => kv.Key == "MaxLength");
@@ -143,7 +159,46 @@ public static class ModelBuilder
                 .ToArray();
         }
 
-        return (maxLength, fields);
+        int? maxItems = null;
+        var maxItemsArg = attr.NamedArguments.FirstOrDefault(kv => kv.Key == "MaxItems");
+        if (maxItemsArg.Key == "MaxItems" && maxItemsArg.Value.Value is int mi && mi > 0)
+            maxItems = mi;
+
+        return (maxLength, fields, maxItems);
+    }
+
+    // Parses <param name="x">description</param> entries from the method's XML doc comment.
+    // Returns an empty dictionary on any parse failure (best-effort, null-safe).
+    private static System.Collections.Generic.Dictionary<string, string> GetXmlParamDescriptions(IMethodSymbol method)
+    {
+        var result = new System.Collections.Generic.Dictionary<string, string>(System.StringComparer.Ordinal);
+        var xml = method.GetDocumentationCommentXml();
+        if (string.IsNullOrWhiteSpace(xml)) return result;
+        try
+        {
+            var doc = XDocument.Parse(xml);
+            foreach (var paramEl in doc.Descendants("param"))
+            {
+                var name = paramEl.Attribute("name")?.Value;
+                var text = paramEl.Value.Trim();
+                if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(text))
+                    result[name!] = text;
+            }
+        }
+        catch
+        {
+            // Best-effort: return whatever was collected so far.
+        }
+        return result;
+    }
+
+    // Converts a PascalCase method name to a human-friendly title by inserting spaces
+    // before each uppercase letter that follows a lowercase letter or digit.
+    // Example: "GetOrderById" -> "Get Order By Id".
+    private static string DeriveTitle(string methodName)
+    {
+        if (string.IsNullOrEmpty(methodName)) return methodName;
+        return Regex.Replace(methodName, @"(?<=[a-z0-9])([A-Z])", " $1");
     }
 
     private static (string Verb, string Route) GetVerbAndRoute(IMethodSymbol method)

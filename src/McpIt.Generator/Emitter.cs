@@ -9,6 +9,7 @@ public static class Emitter
     {
         var genNs = string.IsNullOrEmpty(model.Namespace) ? "Generated" : model.Namespace + ".Generated";
         var description = Escape(model.Description ?? "");
+        var title = Escape(model.Title ?? "");
 
         var paramComments = string.Join("\n", model.Parameters
             .Select(p => $"// param {p.Name} -> ParameterSource.{p.Source}"));
@@ -35,7 +36,7 @@ public static class Emitter
             [global::ModelContextProtocol.Server.McpServerToolType]
             public static class {{model.GeneratedClassName}}
             {
-                [global::ModelContextProtocol.Server.McpServerTool(Name = "{{model.ToolName}}", ReadOnly = {{readOnly}}, Destructive = {{destructive}}, Idempotent = {{idempotent}})]
+                [global::ModelContextProtocol.Server.McpServerTool(Name = "{{model.ToolName}}", Title = "{{title}}", ReadOnly = {{readOnly}}, Destructive = {{destructive}}, Idempotent = {{idempotent}}, OpenWorld = false)]
                 [global::System.ComponentModel.Description("{{description}}")]
                 {{methodBody}}
             }
@@ -45,7 +46,13 @@ public static class Emitter
     private static string BuildMethodBody(EndpointModel model, string routeBuild, string queryBuild, string bodyBuild)
     {
         var allParams = new List<string> { "global::McpIt.IMcpEndpointInvoker invoker" };
-        allParams.AddRange(model.Parameters.Select(p => $"{p.TypeFullyQualified} {p.Name}"));
+        allParams.AddRange(model.Parameters.Select(p =>
+        {
+            var decl = $"{p.TypeFullyQualified} {p.Name}";
+            if (!string.IsNullOrWhiteSpace(p.Description))
+                return $"[global::System.ComponentModel.Description(\"{Escape(p.Description!)}\")] {decl}";
+            return decl;
+        }));
         allParams.Add("global::System.Threading.CancellationToken cancellationToken = default");
         var paramList = string.Join(",\n            ", allParams);
 
@@ -57,6 +64,9 @@ public static class Emitter
             var fieldsExpr = model.OutputFields.Count > 0
                 ? "new string[] { " + string.Join(", ", model.OutputFields.Select(f => "\"" + Escape(f) + "\"")) + " }"
                 : "null";
+            var maxItemsExpr = model.OutputMaxItems.HasValue
+                ? model.OutputMaxItems.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                : "null";
 
             return $$"""
                 public static async global::System.Threading.Tasks.Task<string> Invoke(
@@ -66,7 +76,7 @@ public static class Emitter
                         string? __query = {{queryBuild}};
                         string? __body = {{bodyBuild}};
                         var __r = await invoker.InvokeAsync("{{model.HttpMethod}}", __path, __query, __body, cancellationToken);
-                        return global::McpIt.OutputShaper.Shape(__r, {{maxLengthExpr}}, {{fieldsExpr}});
+                        return global::McpIt.OutputShaper.Shape(__r, {{maxLengthExpr}}, {{fieldsExpr}}, {{maxItemsExpr}});
                     }
                 """;
         }
