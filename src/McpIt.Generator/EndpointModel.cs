@@ -8,7 +8,13 @@ public sealed record ParameterModel(
     string Name,
     string TypeFullyQualified,
     ParameterSource Source,
-    string? Description = null);
+    string? Description = null,
+    // Compact constraint spec derived from DataAnnotation attributes on the original
+    // controller-action parameter. Format: pipe-separated entries in stable order
+    // (req | range:MIN:MAX | strlen:MIN:MAX | minlen:N | maxlen:N | regex:PATTERN)
+    // where regex is always last (patterns can contain '|').
+    // Null when no supported DataAnnotation attributes are present.
+    string? Constraints = null);
 
 public sealed record EndpointModel(
     string Namespace,

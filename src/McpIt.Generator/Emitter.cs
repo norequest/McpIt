@@ -54,13 +54,7 @@ public static class Emitter
         if (model.RequiredScope is not null)
             allParams.Add("global::Microsoft.AspNetCore.Http.IHttpContextAccessor httpContextAccessor");
 
-        allParams.AddRange(model.Parameters.Select(p =>
-        {
-            var decl = $"{p.TypeFullyQualified} {p.Name}";
-            if (!string.IsNullOrWhiteSpace(p.Description))
-                return $"[global::System.ComponentModel.Description(\"{Escape(p.Description!)}\")] {decl}";
-            return decl;
-        }));
+        allParams.AddRange(model.Parameters.Select(EmitParameter));
         allParams.Add("global::System.Threading.CancellationToken cancellationToken = default");
         var paramList = string.Join(",\n            ", allParams);
 
@@ -143,6 +137,230 @@ public static class Emitter
             """;
     }
 
+    // ---------------------------------------------------------------------------
+    // Per-parameter declaration building.
+    //
+    // When Constraints is non-null the emitter does TWO things:
+    //   1. Copies the supported DataAnnotation attributes onto the generated parameter
+    //      so that the MCP SDK (via AIFunctionFactory) surfaces them in the tool's
+    //      JSON input schema (minimum, maximum, maxLength, pattern, etc.).
+    //   2. Appends a concise human-readable constraint hint to the [Description] text
+    //      as belt-and-suspenders for LLM systems that read descriptions directly.
+    //
+    // A parameter with no Constraints emits identically to the pre-Phase-3 output.
+    // ---------------------------------------------------------------------------
+
+    private static string EmitParameter(ParameterModel p)
+    {
+        var decl = $"{p.TypeFullyQualified} {p.Name}";
+
+        if (string.IsNullOrEmpty(p.Constraints))
+        {
+            // No constraints: preserve exact pre-Phase-3 behaviour.
+            return string.IsNullOrWhiteSpace(p.Description)
+                ? decl
+                : $"[global::System.ComponentModel.Description(\"{Escape(p.Description!)}\")] {decl}";
+        }
+
+        // p.Constraints is non-null and non-empty past this point.
+        var constraints = p.Constraints!;
+
+        // Build DataAnnotation attribute declarations from the constraint spec.
+        var constraintAttrs = BuildConstraintAttributes(constraints);
+
+        // Build the enriched description: base description + hint in parentheses.
+        var hint = BuildConstraintHint(constraints);
+        var enrichedDesc = ComposeDescription(p.Description, hint);
+
+        var descAttr = string.IsNullOrWhiteSpace(enrichedDesc)
+            ? string.Empty
+            : $"[global::System.ComponentModel.Description(\"{Escape(enrichedDesc)}\")]";
+
+        // Order: constraint attributes first, then [Description], then the declaration.
+        var prefix = constraintAttrs.Length > 0 && descAttr.Length > 0
+            ? constraintAttrs + " " + descAttr
+            : constraintAttrs + descAttr;
+
+        return prefix.Length > 0 ? $"{prefix} {decl}" : decl;
+    }
+
+    // Compose the description from the base text and a parenthesised hint.
+    // If both are present the hint is appended after the base text, separated by a space
+    // (preserving any trailing period in the base text).
+    private static string ComposeDescription(string? baseDesc, string hint)
+    {
+        var hasBase = !string.IsNullOrWhiteSpace(baseDesc);
+        var hasHint = !string.IsNullOrEmpty(hint);
+        if (!hasBase && !hasHint) return string.Empty;
+        if (!hasBase) return hint;
+        if (!hasHint) return baseDesc!;
+        var trimmed = baseDesc!.TrimEnd();
+        return trimmed.EndsWith(".", System.StringComparison.Ordinal) ? trimmed + " " + hint : trimmed + ". " + hint;
+    }
+
+    // Produce "[global::...Attribute(...)] " tokens for each constraint in the spec.
+    private static string BuildConstraintAttributes(string constraints)
+    {
+        var (entries, regexPattern) = SplitConstraints(constraints);
+        const string da = "global::System.ComponentModel.DataAnnotations.";
+
+        var attrs = new List<string>();
+        foreach (var entry in entries)
+        {
+            var attr = EntryToAttribute(entry, da);
+            if (attr is not null) attrs.Add(attr);
+        }
+
+        if (regexPattern is not null)
+        {
+            // Use a verbatim string literal to avoid double-escaping backslashes in patterns.
+            var escaped = regexPattern.Replace("\"", "\"\"");
+            attrs.Add($"[{da}RegularExpression(@\"{escaped}\")]");
+        }
+
+        return attrs.Count > 0 ? string.Join(" ", attrs) : string.Empty;
+    }
+
+    // Produce the parenthesised hint text appended to [Description] for each constraint.
+    private static string BuildConstraintHint(string constraints)
+    {
+        var (entries, regexPattern) = SplitConstraints(constraints);
+
+        var hints = new List<string>();
+        foreach (var entry in entries)
+        {
+            var hint = EntryToHint(entry);
+            if (hint is not null) hints.Add(hint);
+        }
+
+        if (regexPattern is not null)
+            hints.Add($"pattern: {regexPattern}");
+
+        return hints.Count > 0 ? "(" + string.Join(", ", hints) + ")" : string.Empty;
+    }
+
+    // Split the constraint spec string into non-regex entries (pipe-separated) and the
+    // optional regex pattern. Regex is always LAST in the spec, so splitting on the
+    // first occurrence of '|regex:' is safe even when the pattern contains '|'.
+    private static (string[] Entries, string? RegexPattern) SplitConstraints(string constraints)
+    {
+        const string regexTag = "regex:";
+        const string pipedRegexTag = "|regex:";
+
+        string? regexPattern = null;
+        string toSplit = constraints;
+
+        var pipedIdx = constraints.IndexOf(pipedRegexTag, System.StringComparison.Ordinal);
+        if (pipedIdx >= 0)
+        {
+            regexPattern = constraints.Substring(pipedIdx + pipedRegexTag.Length);
+            toSplit = constraints.Substring(0, pipedIdx);
+        }
+        else if (constraints.StartsWith(regexTag, System.StringComparison.Ordinal))
+        {
+            regexPattern = constraints.Substring(regexTag.Length);
+            toSplit = string.Empty;
+        }
+
+        var entries = string.IsNullOrEmpty(toSplit)
+            ? System.Array.Empty<string>()
+            : toSplit.Split(new char[] { '|' });
+
+        return (entries, regexPattern);
+    }
+
+    // Convert a single constraint entry to its DataAnnotation attribute declaration.
+    private static string? EntryToAttribute(string entry, string da)
+    {
+        if (entry == "req")
+            return $"[{da}Required]";
+
+        if (entry.StartsWith("range:", System.StringComparison.Ordinal))
+        {
+            // Format: range:MIN:MAX
+            var rest = entry.Substring("range:".Length);
+            var colonIdx = rest.IndexOf(':');
+            if (colonIdx < 0) return null;
+            var min = rest.Substring(0, colonIdx);
+            var max = rest.Substring(colonIdx + 1);
+            if (string.IsNullOrEmpty(min) || string.IsNullOrEmpty(max)) return null;
+            return $"[{da}Range({min}, {max})]";
+        }
+
+        if (entry.StartsWith("strlen:", System.StringComparison.Ordinal))
+        {
+            // Format: strlen:MIN:MAX or strlen::MAX (MIN empty = no minimum)
+            var rest = entry.Substring("strlen:".Length);
+            var colonIdx = rest.IndexOf(':');
+            if (colonIdx < 0) return null;
+            var minPart = rest.Substring(0, colonIdx);
+            var maxPart = rest.Substring(colonIdx + 1);
+            if (string.IsNullOrEmpty(maxPart)) return null;
+            return string.IsNullOrEmpty(minPart)
+                ? $"[{da}StringLength({maxPart})]"
+                : $"[{da}StringLength({maxPart}, MinimumLength = {minPart})]";
+        }
+
+        if (entry.StartsWith("minlen:", System.StringComparison.Ordinal))
+        {
+            var n = entry.Substring("minlen:".Length);
+            return string.IsNullOrEmpty(n) ? null : $"[{da}MinLength({n})]";
+        }
+
+        if (entry.StartsWith("maxlen:", System.StringComparison.Ordinal))
+        {
+            var n = entry.Substring("maxlen:".Length);
+            return string.IsNullOrEmpty(n) ? null : $"[{da}MaxLength({n})]";
+        }
+
+        return null;
+    }
+
+    // Convert a single constraint entry to its human-readable hint segment.
+    private static string? EntryToHint(string entry)
+    {
+        if (entry == "req") return "required";
+
+        if (entry.StartsWith("range:", System.StringComparison.Ordinal))
+        {
+            var rest = entry.Substring("range:".Length);
+            var colonIdx = rest.IndexOf(':');
+            if (colonIdx < 0) return null;
+            var min = rest.Substring(0, colonIdx);
+            var max = rest.Substring(colonIdx + 1);
+            return (string.IsNullOrEmpty(min) || string.IsNullOrEmpty(max))
+                ? null
+                : $"range: {min} to {max}";
+        }
+
+        if (entry.StartsWith("strlen:", System.StringComparison.Ordinal))
+        {
+            var rest = entry.Substring("strlen:".Length);
+            var colonIdx = rest.IndexOf(':');
+            if (colonIdx < 0) return null;
+            var minPart = rest.Substring(0, colonIdx);
+            var maxPart = rest.Substring(colonIdx + 1);
+            if (string.IsNullOrEmpty(maxPart)) return null;
+            return string.IsNullOrEmpty(minPart)
+                ? $"max length: {maxPart}"
+                : $"length: {minPart} to {maxPart}";
+        }
+
+        if (entry.StartsWith("minlen:", System.StringComparison.Ordinal))
+        {
+            var n = entry.Substring("minlen:".Length);
+            return string.IsNullOrEmpty(n) ? null : $"min length: {n}";
+        }
+
+        if (entry.StartsWith("maxlen:", System.StringComparison.Ordinal))
+        {
+            var n = entry.Substring("maxlen:".Length);
+            return string.IsNullOrEmpty(n) ? null : $"max length: {n}";
+        }
+
+        return null;
+    }
+
     private static string BuildRouteExpression(EndpointModel model)
     {
         var template = model.RouteTemplate;
@@ -190,8 +408,21 @@ public static class Emitter
         if (queryParams.Count == 0) return "null";
 
         var parts = queryParams.Select(p =>
-            $"(({p.Name} is null) ? null : \"{p.Name}=\" + global::System.Uri.EscapeDataString(" +
-            $"global::System.Convert.ToString({p.Name}, global::System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty))");
+        {
+            var convertExpr =
+                "global::System.Uri.EscapeDataString(" +
+                $"global::System.Convert.ToString({p.Name}, global::System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty)";
+
+            // Non-nullable types (no trailing '?') must not use the `is null` ternary guard:
+            // value types (int, double, bool ...) can never be null, so the compiler rejects
+            // the `x is null` pattern with CS0037. Non-nullable reference types are treated
+            // the same way -- they always contribute a query-string entry.
+            if (!p.TypeFullyQualified.EndsWith("?", System.StringComparison.Ordinal))
+                return $"\"{p.Name}=\" + {convertExpr}";
+
+            // Nullable types: omit the entry from the query string when the value is null.
+            return $"(({p.Name} is null) ? null : \"{p.Name}=\" + {convertExpr})";
+        });
 
         var arrayExpr = "new string?[] { " + string.Join(", ", parts) + " }";
         return $"global::McpIt.QueryStringBuilder.Build({arrayExpr})";
