@@ -34,12 +34,18 @@ internal static class ManifestEmitter
             /// <summary>
             /// Build-time snapshot of the MCP tool-manifest surface for all [McpTool]-annotated
             /// methods in this compilation. AggregateHash is a SHA-256 over the sorted tool
-            /// fingerprints (name, description, and ordered parameter signatures).
+            /// fingerprints (name, description, HTTP verb, combined route, and ordered parameter
+            /// signatures).
             ///
-            /// V1 coverage: tool names are derived via the explicit Name named-arg on [McpTool],
-            /// or camelCase of the method name when no explicit name is set. NamePrefix,
-            /// API-version suffixes, and minimal-API route-level overrides are NOT applied in v1;
-            /// those methods are fingerprinted only by their direct method-level identity.
+            /// P3 coverage: tool names apply class-level [McpTool(NamePrefix=...)] and the
+            /// API-version suffix (_vMAJOR[_MINOR]) for fully-derived names, matching ModelBuilder.
+            /// HTTP verb and combined route (class [Route] + method verb-arg) are included in
+            /// each fingerprint and in the Json; changing either now changes AggregateHash.
+            ///
+            /// Remaining limitations: minimal-API handler methods (verb/route from MapGet etc.)
+            /// are fingerprinted with empty verb/route because those values are not visible from
+            /// method attributes at compile time.
+            ///
             /// Compare AggregateHash against a stored approved snapshot in CI to detect
             /// tool-surface drift or poisoning.
             /// </summary>
@@ -56,7 +62,8 @@ internal static class ManifestEmitter
                 /// Precomputed JSON manifest as a compile-time string constant. No runtime serialization
                 /// is performed; the consumer passes this constant directly to the endpoint helper:
                 ///   app.MapMcpManifest(McpIt.Generated.McpItManifest.Json);
-                /// Structure: { "aggregateHash": "...", "tools": [{ "name": "...", "hash": "...", "parameterCount": N }] }
+                /// Structure: { "aggregateHash": "...", "tools": [{ "name": "...", "verb": "...",
+                ///   "route": "...", "hash": "...", "parameterCount": N }] }
                 /// </summary>
                 public const string Json = "{{escapedJson}}";
 
@@ -66,7 +73,7 @@ internal static class ManifestEmitter
             """;
     }
 
-    // Builds the JSON payload. Tool names are JSON-escaped; hashes are hex-only so need no escaping.
+    // Builds the JSON payload. Tool names and routes are JSON-escaped; hashes are hex-only.
     private static string BuildJson(List<ManifestEntry> sorted, string aggregateHash)
     {
         var sb = new StringBuilder();
@@ -77,6 +84,10 @@ internal static class ManifestEmitter
             var e = sorted[i];
             sb.Append("{\"name\":\"")
               .Append(EscapeJson(e.ToolName))
+              .Append("\",\"verb\":\"")
+              .Append(EscapeJson(e.HttpVerb))
+              .Append("\",\"route\":\"")
+              .Append(EscapeJson(e.Route))
               .Append("\",\"hash\":\"")
               .Append(ManifestHashing.PerToolHash(e))
               .Append("\",\"parameterCount\":")

@@ -16,4 +16,6 @@ public readonly record struct ManifestParamEntry(string Name, string TypeFullyQu
 public sealed record ManifestEntry(
     string ToolName,
     string Description,
+    string HttpVerb,
+    string Route,
     EquatableArray<ManifestParamEntry> Parameters);

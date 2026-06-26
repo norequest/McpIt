@@ -19,13 +19,16 @@ internal static class ManifestHashing
 
     /// <summary>
     /// Builds the canonical fingerprint string for one tool. Captures the model-facing surface:
-    /// the derived tool name, the description, and the ordered sequence of parameter name:type pairs.
+    /// the derived tool name, the description, the HTTP verb, the combined route template,
+    /// and the ordered sequence of parameter name:type pairs.
     /// </summary>
     internal static string Fingerprint(ManifestEntry entry)
     {
         var sb = new StringBuilder();
         sb.Append("name=").Append(entry.ToolName).Append(SepField);
         sb.Append("description=").Append(entry.Description).Append(SepField);
+        sb.Append("verb=").Append(entry.HttpVerb).Append(SepField);
+        sb.Append("route=").Append(entry.Route).Append(SepField);
         sb.Append("params=");
         var first = true;
         foreach (var p in entry.Parameters)
