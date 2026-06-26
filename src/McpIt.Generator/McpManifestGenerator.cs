@@ -42,7 +42,13 @@ public sealed class McpManifestGenerator : IIncrementalGenerator
 
         // Emit one McpItManifest.g.cs file covering all discovered tools.
         context.RegisterSourceOutput(toolEntries, static (spc, entries) =>
-            spc.AddSource("McpItManifest.g.cs", ManifestEmitter.Emit(entries)));
+        {
+            // Do not emit a manifest for a tool-less assembly. Baking an empty McpItManifest
+            // into every assembly with no [McpTool] methods (including McpIt.dll itself) would
+            // collide with the consumer's own generated McpItManifest (CS0436).
+            if (entries.IsDefaultOrEmpty) return;
+            spc.AddSource("McpItManifest.g.cs", ManifestEmitter.Emit(entries));
+        });
     }
 
     // ---------------------------------------------------------------------------

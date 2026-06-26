@@ -30,6 +30,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning fol
   shaping, query-string building, and tool-list sizing.
 - **AOT publish smoke test** (`McpIt.AotCheck` + `benchmarks/aot-publish-smoke.sh`). Validates
   that `dotnet publish -r linux-x64` with AOT warnings-as-errors and trim analysis passes clean.
+- **Per-tool auth scope gate (`RequiredScope`).** `[McpTool(RequiredScope = "scope:name")]` adds
+  an OAuth scope check to the generated tool. The check runs before the loopback call using
+  `McpScopeGuard.HasScope`; a denied check returns a structured JSON error without invoking the
+  endpoint. Matching covers space-delimited `scope` claims and individual `scp`/`scope` claims.
+  `IHttpContextAccessor` is injected automatically by `AddMcpEndpoints`.
+- **Tool-manifest integrity hash (`McpItManifest` + `MapMcpManifest`).** `McpManifestGenerator`
+  emits `McpIt.Generated.McpItManifest` at compile time with three constant members: `AggregateHash`
+  (SHA-256 over all tool fingerprints), `Json` (manifest as a JSON string), and `ToolNames` (sorted
+  array). `app.MapMcpManifest(McpIt.Generated.McpItManifest.Json)` serves it at `GET /mcp/manifest`.
+  Snapshot `AggregateHash` in CI to detect tool-poisoning or unintended drift between deploys.
+  v1 fingerprint scope: tool name, description, and parameter surface. `NamePrefix`, API-version
+  suffixes, and lambda-handler routes are not reflected in the hash.
+- **Minimal-API method-group and `MapGroup` support.** The generator reliably handles method-group
+  handlers and walks `MapGroup` prefix chains at compile time. A named handler method carrying
+  `[McpTool]` registered via `MapGet`/`MapPost`/etc. generates a tool whose loopback path combines
+  all group prefixes with the endpoint route. Inline lambdas do not generate tools (Roslyn returns
+  no symbol for a lambda passed to the `Delegate`-typed `Map` overloads); put `[McpTool]` on a
+  named method instead.
 
 ## [1.3.0] - 2026-06-09
 

@@ -260,25 +260,16 @@ public class ManifestGeneratorTests
     }
 
     [Fact]
-    public void Empty_tool_set_emits_manifest_with_known_stable_hash()
+    public void Tool_less_compilation_emits_no_manifest()
     {
-        // No [McpTool] annotations: generator still emits McpItManifest.
-        // AggregateHash must equal SHA-256("") for an empty compilation.
+        // No [McpTool] annotations: the generator must emit NOTHING. Emitting an empty
+        // McpItManifest into every tool-less assembly (including McpIt.dll) would collide
+        // with the consumer's own generated McpItManifest (CS0436).
         const string source = "namespace Demo; public class Empty { }";
 
-        var resultFirst = RunManifest(source);
-        var resultSecond = RunManifest(source);
+        var result = RunManifest(source);
 
-        Assert.Contains("McpItManifest", resultFirst.AllGeneratedSource);
-
-        var hashFirst = ExtractAggregateHash(resultFirst.AllGeneratedSource);
-        var hashSecond = ExtractAggregateHash(resultSecond.AllGeneratedSource);
-
-        Assert.Equal(64, hashFirst.Length);
-        Assert.Equal(hashFirst, hashSecond);
-
-        // SHA-256("") is a well-known constant.
-        Assert.Equal("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", hashFirst);
+        Assert.DoesNotContain("McpItManifest", result.AllGeneratedSource);
     }
 
     [Fact]

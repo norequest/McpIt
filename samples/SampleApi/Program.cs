@@ -46,6 +46,24 @@ app.MapControllers();
 // MCP lives at /mcp (NOT the root), so it doesn't collide with the API/Swagger.
 app.MapMcp("/mcp");
 
+// TOOL-MANIFEST INTEGRITY HASH (Phase 2 / D3).
+// McpManifestGenerator emits McpIt.Generated.McpItManifest at compile time with:
+//   - AggregateHash : SHA-256 fingerprint over every tool's name, description, and parameters.
+//   - Json          : the full manifest as a JSON string.
+//   - ToolNames     : alphabetically sorted array of all tool names.
+// Serve it at GET /mcp/manifest so CI and clients can snapshot and compare hashes.
+app.MapMcpManifest(McpIt.Generated.McpItManifest.Json);
+
+// MINIMAL-API METHOD-GROUP + MapGroup (Phase 2 / D2).
+// The generator resolves MapGroup prefix chains at compile time and combines them with the
+// route passed to MapGet. ThingHandlers.GetThing carries [McpTool], so the generated tool's
+// loopback path becomes /api/things/{id}.
+// NOTE: inline lambdas (e.g. app.MapGet("/x", id => ...)) do NOT generate tools because
+// Roslyn cannot resolve a symbol for a lambda passed to the Delegate-typed Map overloads.
+// Always put [McpTool] on a named method and reference it as a method group.
+var g = app.MapGroup("/api");
+g.MapGet("/things/{id}", ThingHandlers.GetThing);
+
 // Friendly root: send a browser to the Swagger UI.
 app.MapGet("/", () => Results.Redirect("/swagger"));
 
@@ -60,4 +78,17 @@ namespace SampleApi
     // This covers the addOrderNote tool, whose body is AddNoteRequest.
     [JsonSerializable(typeof(SampleApi.Controllers.AddNoteRequest))]
     internal partial class SampleJsonContext : JsonSerializerContext { }
+}
+
+// MINIMAL-API HANDLER (Phase 2 / D2).
+// Put [McpTool] on a named static method and register it as a method group via MapGet/MapPost.
+// The generator resolves the method symbol at compile time and emits the MCP tool using the
+// combined MapGroup prefix + route segment as the loopback path (/api/things/{id} here).
+// Do NOT put [McpTool] on inline lambdas: Roslyn cannot resolve a symbol for them.
+public static class ThingHandlers
+{
+    /// <summary>Gets a thing by its id.</summary>
+    /// <param name="id">The numeric thing id to retrieve.</param>
+    [McpTool(Name = "getThing")]
+    public static string GetThing(int id) => $"thing-{id}";
 }

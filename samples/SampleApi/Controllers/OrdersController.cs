@@ -75,6 +75,23 @@ public class OrdersController : ControllerBase
         return order with { Item = $"{order.Item} (note: {request.Note})" };
     }
 
+    /// <summary>Cancels an order. Requires the "orders:write" scope.</summary>
+    // PER-TOOL AUTH SCOPE GATE. [McpTool(RequiredScope = "...")] makes the generated tool verify
+    // the caller's ClaimsPrincipal carries the OAuth scope (a space-delimited "scope" claim or
+    // "scp" claims) before the loopback call. The generated tool gets IHttpContextAccessor
+    // injected from DI (registered by AddMcpEndpoints); a missing scope returns a structured
+    // JSON error from McpScopeGuard.Denied instead of invoking the endpoint.
+    [HttpDelete("{id}")]
+    [McpTool(Name = "cancelOrder", AllowDestructive = true, RequiredScope = "orders:write")]
+    public ActionResult<Order> CancelOrder(int id)
+    {
+        var order = Orders.FirstOrDefault(o => o.Id == id);
+        if (order is null)
+            return NotFound();
+        // The demo "database" is read-only; echo the order back marked as cancelled.
+        return order with { Item = $"{order.Item} (cancelled)" };
+    }
+
     /// <summary>Returns projected line-item SKUs and the customer name for an order.</summary>
     /// <param name="id">The numeric order id to look up.</param>
     /// <param name="maxLines">Maximum number of line items to include, 1-50. Omit for the default of 10.</param>
