@@ -1,4 +1,6 @@
 using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using McpIt;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -81,6 +83,52 @@ public class EndToEndToolInvocationTests : IClassFixture<WebApplicationFactory<P
         return await task;
     }
 
+    [Fact]
+    public async Task Post_body_roundtrips_with_context_backed_serializer_options()
+    {
+        // Configures McpEndpointsOptions.SerializerOptions with a source-generated context.
+        // The invoker will use the reflection-free path (SerializeBodyWithOptions) instead of
+        // the reflective fallback. The body must still arrive at the endpoint correctly.
+        var client = _factory.CreateClient();
+        var serializerOptions = new JsonSerializerOptions
+        {
+            TypeInfoResolver = IntegrationTestJsonContext.Default,
+        };
+        var mcpOptions = new McpEndpointsOptions
+        {
+            BaseAddress = client.BaseAddress,
+            SerializerOptions = serializerOptions,
+        };
+
+        var result = await InvokeAddNoteTool("addOrderNote", mcpOptions, id: 1,
+            new SampleApi.Controllers.AddNoteRequest("integration-test-note"));
+
+        // The SampleApi echoes the note back appended to the item description.
+        Assert.Contains("integration-test-note", result);
+    }
+
+    private async Task<string> InvokeAddNoteTool(
+        string toolName,
+        McpEndpointsOptions options,
+        int id,
+        SampleApi.Controllers.AddNoteRequest request)
+    {
+        var client = _factory.CreateClient();
+        var invoker = new HttpClientMcpEndpointInvoker(client, new HttpContextAccessor(), options);
+        var invokeMethod = FindToolInvokeMethod(toolName);
+
+        var args = invokeMethod.GetParameters().Select(p =>
+            p.ParameterType == typeof(IMcpEndpointInvoker) ? (object)invoker :
+            p.Name == "id" ? (object)id :
+            p.ParameterType == typeof(SampleApi.Controllers.AddNoteRequest) ? (object)request :
+            p.ParameterType == typeof(CancellationToken) ? (object)CancellationToken.None :
+            throw new InvalidOperationException($"Unexpected param {p.Name}:{p.ParameterType}"))
+            .ToArray();
+
+        var task = (Task<string>)invokeMethod.Invoke(null, args)!;
+        return await task;
+    }
+
     private static Assembly SampleAssembly() => typeof(SampleApi.Controllers.OrdersController).Assembly;
 
     // Finds the generated static [McpServerTool] method whose tool name matches, by reading
@@ -109,3 +157,10 @@ public class EndToEndToolInvocationTests : IClassFixture<WebApplicationFactory<P
         throw new InvalidOperationException($"No generated tool named '{toolName}' was found.");
     }
 }
+
+/// <summary>
+/// Source-generated JsonSerializerContext covering the SampleApi body type used in the
+/// context-backed integration test. Kept here so the test assembly is self-contained.
+/// </summary>
+[JsonSerializable(typeof(SampleApi.Controllers.AddNoteRequest))]
+internal sealed partial class IntegrationTestJsonContext : JsonSerializerContext { }

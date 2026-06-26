@@ -1,4 +1,6 @@
 using McpIt;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 // AOT compatibility probe for McpIt's runtime helpers.
 //
@@ -11,10 +13,11 @@ using McpIt;
 //   1. OutputShaper.Shape    -- uses JsonDocument DOM + Utf8JsonWriter (reflection-free)
 //   2. QueryStringBuilder.Build -- uses LINQ Where/ToArray + string.Join (AOT-safe)
 //   3. McpEndpointInvocationException -- plain exception subclass (AOT-safe)
-//
-// NOT exercised here: request-body serialization. That path currently uses a
-// reflection-based JsonSerializer context and is not yet AOT-clean. A separate
-// JsonSerializerContext change will add the corresponding assertion to this project.
+//   4. Body-path (AOT-clean variant) -- JsonSerializerOptions.GetTypeInfo +
+//      JsonSerializer.Serialize(object?, JsonTypeInfo): both unannotated, so this
+//      code path is IL2026/IL3050-clean when the consumer supplies a source-generated
+//      JsonSerializerContext via McpEndpointsOptions.SerializerOptions.
+//      NOTE: zero-config AOT is impossible; this test exercises the CONTEXT-BACKED path.
 
 // 1. OutputShaper.Shape: project an object to a subset of top-level fields.
 const string productJson =
@@ -68,3 +71,26 @@ catch (McpEndpointInvocationException ex)
         $"exception:  method={ex.HttpMethod} status={ex.StatusCode} " +
         $"hasUrl={!string.IsNullOrEmpty(ex.RequestUrl)} bodyLen={ex.ResponseBody.Length}");
 }
+
+// 4. Body serialization via source-generated JsonSerializerContext (AOT-clean path).
+//
+// This mirrors what HttpClientMcpEndpointInvoker.SerializeBodyWithOptions does:
+//   - JsonSerializerOptions.GetTypeInfo(Type) has no [RequiresUnreferencedCode] attribute.
+//   - JsonSerializer.Serialize(object?, JsonTypeInfo) has no [RequiresUnreferencedCode] attribute.
+// When McpEndpointsOptions.SerializerOptions is set with a source-generated TypeInfoResolver,
+// the invoker takes this path and reflection is never used. The IL2026/IL3050 build-time
+// gate on this project proves the path is clean (would fail to compile if annotated APIs crept in).
+var bodyOpts = new JsonSerializerOptions { TypeInfoResolver = AotCheckContext.Default };
+var sampleBody = new AotBodySample("Widget Pro", 5);
+var bodyTypeInfo = bodyOpts.GetTypeInfo(typeof(AotBodySample));
+var bodyJson = JsonSerializer.Serialize(sampleBody, bodyTypeInfo);
+Console.WriteLine($"body-path:  {bodyJson}");
+
+// Source-generated context covering the AotBodySample type used in section 4 above.
+// The [JsonSerializable] attribute triggers the STJ source generator at compile time,
+// producing strongly-typed metadata that the GetTypeInfo + Serialize path uses instead
+// of runtime reflection.
+[JsonSerializable(typeof(AotBodySample))]
+internal sealed partial class AotCheckContext : JsonSerializerContext { }
+
+internal sealed record AotBodySample(string Name, int Qty);

@@ -47,4 +47,16 @@ public sealed class McpEndpointsOptions
     /// </para>
     /// </summary>
     public bool ThrowOnUnsuccessfulResponse { get; set; }
+
+    /// <summary>
+    /// When set (typically <c>new JsonSerializerOptions { TypeInfoResolver = MyJsonContext.Default }</c>),
+    /// loopback request bodies are serialized through this options instance, making the body path
+    /// reflection-free and Native-AOT / trim safe. When <c>null</c> (the default), a reflection-based
+    /// serializer is used, which is zero-config but not AOT clean.
+    /// </summary>
+    /// <remarks>
+    /// The request body is the only place McpIt serializes user data outbound. All other runtime paths
+    /// (output shaping, query string building) are already reflection-free.
+    /// </remarks>
+    public System.Text.Json.JsonSerializerOptions? SerializerOptions { get; set; }
 }
