@@ -23,6 +23,11 @@ public static class ModelBuilder
     {
         if (ctx.TargetSymbol is not IMethodSymbol method) return null;
 
+        // Controller pipeline: skip non-controller classes.
+        // Minimal-API handler methods live in plain classes and are processed
+        // by the separate Map*-invocation pipeline in McpToolGenerator.
+        if (!InheritsFromControllerBase(method.ContainingType)) return null;
+
         var ns = method.ContainingType.ContainingNamespace.IsGlobalNamespace
             ? string.Empty
             : method.ContainingType.ContainingNamespace.ToDisplayString();
@@ -353,4 +358,96 @@ public static class ModelBuilder
 
     private static string ToCamelCase(string s) =>
         string.IsNullOrEmpty(s) ? s : char.ToLowerInvariant(s[0]) + s.Substring(1);
+
+    // Walks the base-type chain to check for ControllerBase inheritance.
+    // Matched by fully-qualified name so the check works even when the MVC
+    // assembly is not the exact same reference version loaded here.
+    private static bool InheritsFromControllerBase(INamedTypeSymbol type)
+    {
+        var current = type.BaseType;
+        while (current is not null)
+        {
+            if (current.ToDisplayString() == "Microsoft.AspNetCore.Mvc.ControllerBase")
+                return true;
+            current = current.BaseType;
+        }
+        return false;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Minimal-API path: builds a model from a handler method whose verb and route
+    // come from the surrounding MapGet/MapPost/... invocation, not from controller
+    // attributes. No class-level route combining or API-version substitution is
+    // performed; the caller supplies the complete route string verbatim.
+    // The handler MUST carry [McpIt.McpToolAttribute]; callers should verify this
+    // before calling, but the method also checks and returns null if absent.
+    // ---------------------------------------------------------------------------
+    public static EndpointModel? BuildFromHandler(
+        IMethodSymbol handler,
+        string verb,
+        string route,
+        Compilation compilation)
+    {
+        var mcpAttr = handler.GetAttributes().FirstOrDefault(a =>
+            a.AttributeClass?.ToDisplayString() == "McpIt.McpToolAttribute");
+        if (mcpAttr is null) return null;
+
+        var ns = handler.ContainingType.ContainingNamespace.IsGlobalNamespace
+            ? string.Empty
+            : handler.ContainingType.ContainingNamespace.ToDisplayString();
+
+        // Prefix avoids hint-name collisions with a same-named controller tool.
+        var className = $"MinApi_{handler.ContainingType.Name}_{handler.Name}_Tool";
+
+        var explicitName = mcpAttr.NamedArguments
+            .FirstOrDefault(kv => kv.Key == "Name").Value.Value as string;
+        var toolName = string.IsNullOrWhiteSpace(explicitName)
+            ? ToCamelCase(handler.Name)
+            : explicitName!;
+
+        var allowDestructive = mcpAttr.NamedArguments
+            .FirstOrDefault(kv => kv.Key == "AllowDestructive").Value.Value is bool b && b;
+
+        var description = GetXmlSummary(handler) ?? GetDescriptionAttribute(handler);
+        var (readOnly, destructive, idempotent) = DeriveSafety(verb);
+        var (outputMaxLength, outputFields, outputMaxItems) = GetOutputShaping(handler);
+
+        var explicitTitle = mcpAttr.NamedArguments
+            .FirstOrDefault(kv => kv.Key == "Title").Value.Value as string;
+        var title = string.IsNullOrWhiteSpace(explicitTitle)
+            ? DeriveTitle(handler.Name)
+            : explicitTitle!;
+
+        var paramDescriptions = GetXmlParamDescriptions(handler);
+        var cancellationTokenType = compilation.GetTypeByMetadataName("System.Threading.CancellationToken");
+
+        var parameters = handler.Parameters
+            .Where(p => !IsCancellationToken(p.Type, cancellationTokenType))
+            .Select(p =>
+            {
+                var model = ParameterClassifier.Classify(p, route);
+                if (paramDescriptions.TryGetValue(p.Name, out var desc) && !string.IsNullOrWhiteSpace(desc))
+                    model = model with { Description = desc };
+                return model;
+            })
+            .ToArray();
+
+        return new EndpointModel(
+            Namespace: ns,
+            GeneratedClassName: className,
+            ToolName: toolName,
+            Description: description,
+            HttpMethod: verb,
+            RouteTemplate: route,
+            Parameters: new EquatableArray<ParameterModel>(parameters),
+            ReadOnly: readOnly,
+            Destructive: destructive,
+            Idempotent: idempotent,
+            AllowDestructive: allowDestructive,
+            OutputMaxLength: outputMaxLength,
+            OutputFields: new EquatableArray<string>(outputFields),
+            OutputMaxItems: outputMaxItems,
+            Title: title,
+            Location: LocationInfo.From(handler.Locations.FirstOrDefault() ?? Location.None));
+    }
 }
