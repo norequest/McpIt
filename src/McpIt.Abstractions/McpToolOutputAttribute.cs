@@ -19,4 +19,10 @@ public sealed class McpToolOutputAttribute : Attribute
     /// element of an array response). All other properties are dropped.
     /// </summary>
     public string[]? Fields { get; set; }
+
+    /// <summary>
+    /// When greater than zero, keeps only the first N elements of an array response.
+    /// Applied after field projection and before length truncation.
+    /// </summary>
+    public int MaxItems { get; set; }
 }

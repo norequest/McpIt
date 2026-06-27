@@ -36,6 +36,13 @@ public sealed class McpToolAttribute : Attribute
     public bool AllowDestructive { get; set; }
 
     /// <summary>
+    /// Optional human-friendly display title for the tool. When null, a title is derived
+    /// automatically from the method name by splitting on PascalCase word boundaries
+    /// (for example, "GetOrderById" becomes "Get Order By Id").
+    /// </summary>
+    public string? Title { get; set; }
+
+    /// <summary>
     /// Only applies when the attribute is placed on a controller <b>class</b>.
     /// Prepended to the derived (camelCase method-name) tool name of each
     /// <c>[McpTool]</c>-annotated action in that class. It is not applied when an
@@ -43,4 +50,12 @@ public sealed class McpToolAttribute : Attribute
     /// verbatim). When placed on a method, this property is ignored.
     /// </summary>
     public string? NamePrefix { get; set; }
+
+    /// <summary>
+    /// When set, the generated tool verifies the caller's <see cref="System.Security.Claims.ClaimsPrincipal"/>
+    /// carries this OAuth scope before the loopback call, returning a structured JSON error otherwise.
+    /// Scope matching checks a space-delimited <c>scope</c> claim (OAuth convention) and
+    /// individual <c>scp</c> or <c>scope</c> claims. Works for both controller and minimal-API tools.
+    /// </summary>
+    public string? RequiredScope { get; set; }
 }

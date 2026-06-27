@@ -1,4 +1,8 @@
 <Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/McpIt.Benchmarks/McpIt.Benchmarks.csproj" />
+    <Project Path="benchmarks/McpIt.AotCheck/McpIt.AotCheck.csproj" />
+  </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/SampleApi/SampleApi.csproj" />
   </Folder>
