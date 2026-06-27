@@ -1,4 +1,5 @@
 using McpIt;
+using System.ComponentModel;
 using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -54,15 +55,25 @@ app.MapMcp("/mcp");
 // Serve it at GET /mcp/manifest so CI and clients can snapshot and compare hashes.
 app.MapMcpManifest(McpIt.Generated.McpItManifest.Json);
 
-// MINIMAL-API METHOD-GROUP + MapGroup (Phase 2 / D2).
-// The generator resolves MapGroup prefix chains at compile time and combines them with the
-// route passed to MapGet. ThingHandlers.GetThing carries [McpTool], so the generated tool's
-// loopback path becomes /api/things/{id}.
-// NOTE: inline lambdas (e.g. app.MapGet("/x", id => ...)) do NOT generate tools because
-// Roslyn cannot resolve a symbol for a lambda passed to the Delegate-typed Map overloads.
-// Always put [McpTool] on a named method and reference it as a method group.
+// MINIMAL-API: METHOD-GROUPS, MapGroup PREFIX CHAINS, AND INLINE LAMBDAS.
+// Three supported shapes for minimal-API MCP tools:
+//   1. Method-group handler:  app.MapGet("/route", Handlers.Method)
+//   2. MapGroup prefix chain: var g = app.MapGroup("/api"); g.MapGet("/x", H)
+//   3. Inline lambda:         app.MapGet("/route", [McpTool] (TypeName param) => ...)
+// A named method or explicit [McpTool(Name = "...")] gives full control over the tool name
+// and Title. Without an explicit Name the generator derives the tool name as verb_sanitizedRoute.
 var g = app.MapGroup("/api");
 g.MapGet("/things/{id}", ThingHandlers.GetThing);
+
+// INLINE LAMBDA WITH [McpTool] (Phase 3 demo).
+// A lambda has no method name, so Title is auto-derived and the tool name is derived as
+// verb_sanitizedRoute: GET /ping/{name} -> tool name "get_ping_name", class suffix "GET_ping_name".
+// Pass [McpTool(Name = "myTool")] to take explicit control over the name.
+// Lambdas carry no XML doc comments: use [Description("...")] to supply the tool description.
+app.MapGet("/ping/{name}",
+    [McpTool]
+    [Description("Returns a greeting for the given name.")]
+    (string name) => $"pong: {name}");
 
 // Friendly root: send a browser to the Swagger UI.
 app.MapGet("/", () => Results.Redirect("/swagger"));
@@ -80,11 +91,12 @@ namespace SampleApi
     internal partial class SampleJsonContext : JsonSerializerContext { }
 }
 
-// MINIMAL-API HANDLER (Phase 2 / D2).
+// MINIMAL-API HANDLER (method-group form).
 // Put [McpTool] on a named static method and register it as a method group via MapGet/MapPost.
 // The generator resolves the method symbol at compile time and emits the MCP tool using the
 // combined MapGroup prefix + route segment as the loopback path (/api/things/{id} here).
-// Do NOT put [McpTool] on inline lambdas: Roslyn cannot resolve a symbol for them.
+// Inline lambdas also work: place [McpTool] (and [Description]) directly on the lambda.
+// Named methods give a meaningful auto-derived Title and full XML doc comment support.
 public static class ThingHandlers
 {
     /// <summary>Gets a thing by its id.</summary>

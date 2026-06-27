@@ -122,7 +122,7 @@ The only comparable library, `Api.ToMcp`, performs an internal HTTP self-call at
 
 ## Features
 
-- **Controllers and minimal APIs.** Mark a controller action or a minimal-API handler method with `[McpTool]` to opt it in. For minimal APIs, put `[McpTool]` on a named handler method (not an inline lambda) and register it with `MapGet`/`MapPost`/etc.; `MapGroup` prefix chaining is supported. Exposure is opt-in: only annotated endpoints become tools. See [Minimal-API support](#minimal-api-support).
+- **Controllers and minimal APIs.** Mark a controller action or a minimal-API handler method with `[McpTool]` to opt it in. For minimal APIs, put `[McpTool]` on a named handler method or directly on an inline lambda and register it with `MapGet`/`MapPost`/etc.; `MapGroup` prefix chaining is supported. Exposure is opt-in: only annotated endpoints become tools. See [Minimal-API support](#minimal-api-support).
 - **Tool names.** `[McpTool]` derives a camelCase name from the method, or set `Name` explicitly. Placed on a controller class, `[McpTool]` sets defaults (such as `NamePrefix`) for that class's annotated actions without exposing anything on its own.
 - **Output shaping with `[McpToolOutput]`.** Keep responses lean. `Fields` projects the response to the JSON properties you list: top-level names, dot paths (`"customer.name"` drills into a nested object), and array markers (`"lines[].sku"` projects each array element down to that sub-property). `MaxItems` caps array elements. `MaxLength` truncates the final result. Shaping order: project, cap, truncate. Malformed JSON passes through untouched.
 
@@ -139,6 +139,7 @@ The only comparable library, `Api.ToMcp`, performs an internal HTTP self-call at
 - **MCPGEN diagnostics.** Build-time warnings keep your tool surface honest: `MCPGEN001` when a tool has no description, `MCPGEN002` when a destructive operation is exposed without acknowledgement, `MCPGEN003` when a versioned route token is present but no API version can be resolved.
 - **API versioning.** URL-segment versioning (`Asp.Versioning` and the legacy `Microsoft.AspNetCore.Mvc.Versioning`) works out of the box. No changes to your controllers are required; see the [API versioning](#api-versioning) section below.
 - **Per-parameter descriptions.** XML `<param name="x">...</param>` doc comments on a `[McpTool]` action are emitted as `[Description]` on the generated tool's input parameters and surfaced in the MCP `inputSchema`, so agents see them alongside the type and required/optional flag.
+- **Validation-constraint schema.** DataAnnotations on action or handler parameters (`[Range]`, `[StringLength]`, `[MinLength]`, `[MaxLength]`, `[RegularExpression]`, `[Required]`) are copied onto the generated tool's input parameters. The MCP SDK surfaces them as JSON Schema constraints (`minimum`, `maximum`, `minLength`, `maxLength`, `pattern`). No extra configuration is needed. See [Validation-constraint schema](#validation-constraint-schema).
 - **Tool `Title`.** `[McpTool(Title = "Friendly Name")]` sets the MCP tool `title` field that clients may show in their UI instead of the raw tool name. Without it, McpIt derives a title from the method name.
 - **OpenTelemetry spans.** McpIt emits spans from an `ActivitySource` named `"McpIt"` around every loopback call. Wire any OTel exporter with `.AddSource("McpIt")`; no extra packages needed.
 - **AOT-ready body serialization.** Provide a `JsonSerializerContext` via `AddMcpEndpoints(o => o.SerializerOptions = ...)` to make the loopback request-body path reflection-free. Omitting it falls back to reflective serialization.
@@ -252,14 +253,16 @@ McpIt generates two distinct tools: `info_v1` (loopback path `/v1/account/info`)
 
 ## Minimal-API support
 
-McpIt generates tools for minimal-API handlers alongside controller actions. The critical rule: **put `[McpTool]` on a named handler method, not an inline lambda.**
+McpIt generates tools for minimal-API handlers alongside controller actions. Three handler shapes are all supported:
 
-Supported: method-group handlers and `MapGroup` prefix chaining. The generator resolves the `MapGroup` chain at compile time and combines every prefix with the route segment passed to `MapGet`/`MapPost`/etc.
+- **Named method-group handlers.** `[McpTool]` on a named static or instance method, referenced as a method group in the `MapGet`/`MapPost`/etc. call.
+- **`MapGroup` prefix chains.** The generator resolves the chain at compile time and combines every prefix with the route segment. Both direct-chain (`app.MapGroup("/api").MapGet(...)`) and variable form (`var g = app.MapGroup("/api"); g.MapGet(...)`) work, including nested groups.
+- **Inline lambdas.** `[McpTool]` placed in the attribute list directly on the lambda expression.
 
-Not supported for tool generation: inline lambdas passed directly to `app.MapGet(...)`. Roslyn returns no symbol for a lambda passed to the `Delegate`-typed `Map` overloads, so no tool is generated. Extract the handler to a named static method and reference it as a method group.
+**Inline lambda tool names.** A lambda has no method name, so the tool name is auto-derived as `{verb}_{sanitizedRoute}` (for example, a GET handler on `/ping/{name}` produces tool name `get_ping_name`). Use `[McpTool(Name = "...")]` to set the tool name explicitly and `[McpTool(Title = "...")]` to set the display title.
 
 ```csharp
-// Handler class: put [McpTool] on a named method.
+// Named method-group handler: [McpTool] on the method itself.
 public static class ThingHandlers
 {
     /// <summary>Gets a thing by its id.</summary>
@@ -268,16 +271,16 @@ public static class ThingHandlers
     public static string GetThing(int id) => $"thing-{id}";
 }
 
-// Registration: MapGroup prefix + method group.
-// The generator combines the prefix and route into the loopback path: /api/things/{id}.
+// MapGroup prefix chain: generator combines prefix and route -> /api/things/{id}.
 var g = app.MapGroup("/api");
 g.MapGet("/things/{id}", ThingHandlers.GetThing);
 
-// This does NOT generate a tool (inline lambda, no resolvable symbol):
-// app.MapGet("/things/{id}", (int id) => $"thing-{id}");
+// Inline lambda: [McpTool] in the lambda attribute list.
+// Auto-derived tool name: "get_ping_name". Override with Name = "..." if needed.
+app.MapGet("/ping/{name}", [McpTool] (string name) => $"pong {name}");
 ```
 
-Nested `MapGroup` chains work: if you wrap groups inside groups, the generator walks the full chain and concatenates all segments.
+Nested `MapGroup` chains work: the generator walks the full chain and concatenates all segments.
 
 ---
 
@@ -337,6 +340,48 @@ The `<summary>` becomes the tool-level description. Each `<param>` tag becomes t
 
 ---
 
+## Validation-constraint schema
+
+When a `[McpTool]` action or handler declares parameters with DataAnnotations, McpIt copies those constraints onto the generated tool's input parameters. The official MCP SDK surfaces them as JSON Schema keywords (`minimum`, `maximum`, `minLength`, `maxLength`, `pattern`), so the model receives a constrained input schema. No extra configuration is needed: McpIt reads the DataAnnotations already on your action.
+
+Supported attributes: `[Range]`, `[StringLength]`, `[MinLength]`, `[MaxLength]`, `[RegularExpression]`, `[Required]`.
+
+As a belt-and-suspenders measure McpIt also appends a concise human-readable hint to the parameter's `[Description]` (for example, `(range: 1 to 100)`) so agents that read descriptions directly also see the constraint.
+
+```csharp
+[HttpGet("products")]
+[McpTool(Name = "listProducts", Title = "List Products")]
+public ActionResult<Product[]> ListProducts(
+    [Range(1, 100)] int pageSize = 20,
+    [StringLength(50)] string? q = null)
+{ ... }
+```
+
+The model receives:
+
+```json
+{
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "pageSize": { "type": "integer", "minimum": 1, "maximum": 100 },
+      "q":        { "type": "string",  "maxLength": 50 }
+    }
+  }
+}
+```
+
+Attribute-to-schema mapping:
+
+- `[Range(min, max)]`: `minimum` and `maximum`.
+- `[StringLength(max)]`: `maxLength`. With `MinimumLength = min` also adds `minLength`.
+- `[MinLength(n)]`: `minLength`.
+- `[MaxLength(n)]`: `maxLength`.
+- `[RegularExpression(pattern)]`: `pattern`.
+- `[Required]`: marks the parameter as required in the schema.
+
+---
+
 ## Tool Title
 
 `[McpTool(Title = "Friendly Name")]` sets the MCP tool `title` field that clients may display in their UI instead of the raw tool name. Without a `Title`, McpIt derives one from the method name in title case. All generated tools emit `openWorld: false`.
@@ -392,7 +437,7 @@ When `SerializerOptions` is set, the loopback request-body path calls `GetTypeIn
 At compile time, `McpManifestGenerator` emits a class `McpIt.Generated.McpItManifest` with three constant members:
 
 - `AggregateHash`: SHA-256 fingerprint computed over all tool names, descriptions, and parameter surfaces, sorted for stability.
-- `Json`: the full manifest as a compile-time JSON string: `{"aggregateHash":"...","tools":[{"name":"...","hash":"...","parameterCount":N}]}`.
+- `Json`: the full manifest as a compile-time JSON string: `{"aggregateHash":"...","tools":[{"name":"...","verb":"GET","route":"orders/{id}","hash":"...","parameterCount":N}]}`.
 - `ToolNames`: alphabetically sorted `string[]` of every tool name in the assembly.
 
 Serve the manifest at runtime with one call in `Program.cs`:
@@ -409,7 +454,7 @@ app.MapMcpManifest(McpIt.Generated.McpItManifest.Json, "/api/tool-manifest");
 
 **Use case: CI drift detection.** Store `McpIt.Generated.McpItManifest.AggregateHash` as a reference value in your CI pipeline. On each deploy, fetch `GET /mcp/manifest` and compare `aggregateHash`. A mismatch means a tool was added, removed, renamed, or its parameter surface changed since the reference was captured. MCP clients can perform the same check to detect tool-poisoning between sessions.
 
-**v1 fingerprint scope.** The hash covers tool name, description, and parameter surface (names and types). It does not reflect: `NamePrefix` on a controller class, API-version suffixes appended to derived tool names, or the route of a lambda handler. Keep that scope in mind when interpreting hash changes across versions.
+**Fingerprint scope.** The hash covers tool name (with class-level `NamePrefix` and API-version suffix applied, matching the names the MCP client sees), description, HTTP verb, combined route (class `[Route]` plus method verb-route argument), and parameter surface (names and types). Changing a controller route or HTTP verb now changes `AggregateHash`. Remaining limitation: minimal-API handler methods receive empty verb and route in the manifest because those values come from the `MapGet`/`MapPost`/etc. call syntax rather than from attributes, and are not visible to the attribute-driven pipeline at compile time. Keep that scope in mind when interpreting hash changes.
 
 ---
 

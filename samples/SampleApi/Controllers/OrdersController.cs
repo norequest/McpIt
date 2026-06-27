@@ -1,5 +1,6 @@
 using McpIt;
 using Microsoft.AspNetCore.Mvc;
+using System.ComponentModel.DataAnnotations;
 
 namespace SampleApi.Controllers;
 
@@ -29,6 +30,28 @@ public class OrdersController : ControllerBase
     [McpTool]
     public IEnumerable<string> ListOrders() =>
         Orders.Select(o => $"#{o.Id} {o.Customer} ({o.Status})");
+
+    /// <summary>Searches orders by optional name filter with pagination.</summary>
+    /// <param name="pageSize">Results per page, 1 to 100.</param>
+    /// <param name="q">Optional customer name filter, up to 50 chars.</param>
+    // VALIDATION-CONSTRAINT SCHEMA (Phase 3 demo).
+    // [Range(1, 100)] on pageSize causes the generator to emit JSON Schema "minimum: 1,
+    // maximum: 100" on the tool parameter and append "(range: 1 to 100)" to its Description.
+    // [StringLength(50)] on q emits "maxLength: 50" and "(max length: 50)" to the Description.
+    // Both appear in the MCP inputSchema the model sees, requiring no extra tooling or runtime
+    // validation code here. [FromQuery] is pure ASP.NET Core model-binding metadata and does not
+    // affect constraint extraction: the generator reads DataAnnotations independently.
+    [HttpGet("search")]
+    [McpTool(Name = "searchOrders")]
+    public IEnumerable<string> SearchOrders(
+        [FromQuery][Range(1, 100)] int pageSize,
+        [FromQuery][StringLength(50)] string? q)
+    {
+        var filtered = string.IsNullOrWhiteSpace(q)
+            ? Orders
+            : Orders.Where(o => o.Customer.Contains(q, StringComparison.OrdinalIgnoreCase));
+        return filtered.Take(pageSize).Select(o => $"#{o.Id} {o.Customer} ({o.Status})");
+    }
 
     /// <summary>Gets the full detail of a single order by its id.</summary>
     /// <param name="id">The numeric order id to look up.</param>

@@ -42,12 +42,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning fol
   Snapshot `AggregateHash` in CI to detect tool-poisoning or unintended drift between deploys.
   v1 fingerprint scope: tool name, description, and parameter surface. `NamePrefix`, API-version
   suffixes, and lambda-handler routes are not reflected in the hash.
-- **Minimal-API method-group and `MapGroup` support.** The generator reliably handles method-group
-  handlers and walks `MapGroup` prefix chains at compile time. A named handler method carrying
-  `[McpTool]` registered via `MapGet`/`MapPost`/etc. generates a tool whose loopback path combines
-  all group prefixes with the endpoint route. Inline lambdas do not generate tools (Roslyn returns
-  no symbol for a lambda passed to the `Delegate`-typed `Map` overloads); put `[McpTool]` on a
-  named method instead.
+- **Minimal-API method-group, `MapGroup`, and inline-lambda support.** The generator handles all
+  three minimal-API handler shapes: named method-group handlers, `MapGroup` prefix chains (direct
+  chain and variable form, including nested groups), and inline lambdas with `[McpTool]` in the
+  lambda attribute list. Inline lambdas previously produced no tool; they now generate a fully
+  functional tool whose name is auto-derived as `{verb}_{sanitizedRoute}` (e.g. `get_ping_name`
+  for `MapGet("/ping/{name}", [McpTool] (string name) => ...)`). Use `[McpTool(Name = "...")]`
+  to override the auto-derived name.
+- **Validation-constraint schema.** DataAnnotations on action or handler parameters are now copied
+  onto the generated tool's input parameters, and the MCP SDK surfaces them as JSON Schema
+  constraints. Supported attributes: `[Range]` (maps to `minimum`/`maximum`), `[StringLength]`
+  (maps to `maxLength`, optionally `minLength`), `[MinLength]` (`minLength`), `[MaxLength]`
+  (`maxLength`), `[RegularExpression]` (`pattern`), `[Required]` (required parameter). McpIt
+  also appends a concise human-readable hint to the parameter description as a belt-and-suspenders
+  measure. No configuration is required.
+- **Manifest fingerprint enrichment.** `McpItManifest.Json` now includes `"verb"` and `"route"`
+  fields per tool entry. `AggregateHash` now covers HTTP verb, combined route (class `[Route]`
+  plus method verb-route argument), class-level `NamePrefix`, and API-version suffixes in addition
+  to the existing name, description, and parameter surface. Changing a controller route or verb
+  now changes `AggregateHash`. Remaining limitation: minimal-API handlers receive empty verb and
+  route in the manifest because those values come from the `MapGet`/etc. call syntax and are not
+  visible to the attribute-driven pipeline at compile time.
 
 ## [1.3.0] - 2026-06-09
 
