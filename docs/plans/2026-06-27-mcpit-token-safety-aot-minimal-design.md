@@ -283,9 +283,26 @@ not supplied. The library stays analyzer-clean by isolating and annotating the r
   consumer's manifest. V1 fingerprint covers tool name, description, and parameter surface;
   `NamePrefix`, API-version suffixes, and lambda routes are not yet reflected.
 
-### Deferred to Phase 3
+### Delivered in Phase 3 (same branch)
 
-- A-stretch validation-constraint schema (`[Range]`/`[StringLength]`/`[RegularExpression]`/
-  enum to JSON Schema keywords), gated on verifying the SDK schema-builder interaction.
-- Minimal-API lambda handlers against the real `Delegate`-typed overloads; manifest v1
-  derivation gaps (prefix/version/lambda); manifest coverage of minimal-API route identity.
+- A-stretch validation-constraint schema: a spike confirmed ModelContextProtocol 1.4.0 (via
+  Microsoft.Extensions.AI) DOES honor DataAnnotations on tool parameters, so the generator now
+  copies `[Range]`/`[StringLength]`/`[MinLength]`/`[MaxLength]`/`[RegularExpression]`/`[Required]`
+  from the action parameter onto the generated tool parameter (and appends a concise hint to the
+  parameter Description). The model gets minimum/maximum/minLength/maxLength/pattern keywords with
+  no extra configuration.
+- Minimal-API inline lambda handlers now generate tools against the real
+  `WebApplication.MapGet(string, Delegate)` overload by reading the lambda from syntax (the
+  lambda's method symbol is unresolvable under a `Delegate` parameter). Caveat: a lambda has no
+  method name, so its `Title` is empty and the tool name derives as `verb_sanitizedRoute`; use
+  `[McpTool(Name = "...")]` to control it.
+- Manifest fingerprint enrichment: the manifest now applies `NamePrefix` and API-version suffixes
+  to tool names and includes each tool's HTTP verb and route in the fingerprint and `Json`, so it
+  catches verb/route changes too.
+
+### Still deferred
+
+- MCP resources/prompts/completions (explicit non-goal this iteration).
+- Manifest coverage of minimal-API handler verb/route (those live in the `Map(...)` call syntax,
+  not attributes; documented limitation).
+- Cosmetic: derive a `Title` for lambda tools from the route.
