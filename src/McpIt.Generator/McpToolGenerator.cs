@@ -49,6 +49,8 @@ public sealed class McpToolGenerator : IIncrementalGenerator
                     Diagnostics.UnresolvedApiVersion, vloc.ToLocation(), model.ToolName));
             }
 
+            DiscoverabilityLint.Report(spc, model);
+
             // Qualify the hint name with the namespace: the same class+action name can recur in
             // separate per-version controllers (e.g. V1.AccountController and V2.AccountController),
             // and AddSource requires a unique hint name per generator.
@@ -90,10 +92,30 @@ public sealed class McpToolGenerator : IIncrementalGenerator
                 spc.ReportDiagnostic(Diagnostic.Create(
                     Diagnostics.DestructiveOperation, dloc.ToLocation(), model.ToolName));
 
+            DiscoverabilityLint.Report(spc, model);
+
             var hint = string.IsNullOrEmpty(model.Namespace)
                 ? $"{model.GeneratedClassName}.g.cs"
                 : $"{model.Namespace}.{model.GeneratedClassName}.g.cs";
             spc.AddSource(hint, Emitter.Emit(model));
+        });
+
+        // -------------------------------------------------------------------
+        // Tool catalog: McpIt.Generated.McpItToolCatalog, built from the SAME models as the
+        // two pipelines above so every entry matches an emitted tool exactly.
+        //
+        // Emitted only when the assembly has at least one tool. An empty catalog would land in
+        // McpIt.dll itself (it runs this generator too) and, being public, collide with every
+        // consumer's own catalog (CS0436).
+        // -------------------------------------------------------------------
+        var allModels = controllerModels.Collect()
+            .Combine(minimalApiModels.Collect());
+
+        context.RegisterSourceOutput(allModels, static (spc, pair) =>
+        {
+            var (controllers, minimalApis) = pair;
+            if (controllers.Length + minimalApis.Length == 0) return;
+            spc.AddSource(CatalogEmitter.HintName, CatalogEmitter.Emit(controllers.Concat(minimalApis)));
         });
     }
 

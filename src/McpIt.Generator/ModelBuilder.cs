@@ -85,10 +85,13 @@ public static class ModelBuilder
         var requiredScope = mcpAttr?.NamedArguments
             .FirstOrDefault(kv => kv.Key == "RequiredScope").Value.Value as string;
 
+        var (category, keywords, priority) = GetDiscoverability(mcpAttr, classMcpAttr);
+
         var paramDescriptions = GetXmlParamDescriptions(method);
 
         var cancellationTokenType = ctx.SemanticModel.Compilation
             .GetTypeByMetadataName("System.Threading.CancellationToken");
+        var undescribed = GetUndescribedParameters(method.Parameters, paramDescriptions, cancellationTokenType);
 
         var parameters = method.Parameters
             .Where(p => !IsCancellationToken(p.Type, cancellationTokenType))
@@ -118,8 +121,76 @@ public static class ModelBuilder
             OutputMaxItems: outputMaxItems,
             Title: title,
             Location: LocationInfo.From(method.Locations.FirstOrDefault() ?? Location.None),
-            RequiredScope: requiredScope);
+            RequiredScope: requiredScope,
+            Category: category,
+            Keywords: new EquatableArray<string>(keywords),
+            Priority: priority,
+            UndescribedParameters: new EquatableArray<string>(undescribed));
     }
+
+    // Reads Category/Keywords/Priority from [McpTool]. Category on the controller class is a
+    // default for its actions (the action value wins); Keywords and Priority are method-level
+    // only, since a class-wide keyword or boost would apply equally to every action and not help
+    // tell them apart. classAttr is null for minimal-API handlers.
+    private static (string? Category, string[] Keywords, int Priority) GetDiscoverability(
+        AttributeData? actionAttr, AttributeData? classAttr)
+    {
+        var category = NamedString(actionAttr, "Category");
+        if (string.IsNullOrWhiteSpace(category))
+            category = NamedString(classAttr, "Category");
+
+        var keywords = Array.Empty<string>();
+        if (actionAttr is not null)
+        {
+            var kwArg = actionAttr.NamedArguments.FirstOrDefault(kv => kv.Key == "Keywords");
+            if (kwArg.Key == "Keywords" && !kwArg.Value.IsNull && kwArg.Value.Kind == TypedConstantKind.Array)
+                keywords = NormalizeKeywords(kwArg.Value.Values.Select(v => v.Value as string));
+        }
+
+        var priority = actionAttr?.NamedArguments
+            .FirstOrDefault(kv => kv.Key == "Priority").Value.Value is int p ? p : 0;
+
+        return (string.IsNullOrWhiteSpace(category) ? null : category!.Trim(), keywords, priority);
+    }
+
+    private static string? NamedString(AttributeData? attr, string name) =>
+        attr?.NamedArguments.FirstOrDefault(kv => kv.Key == name).Value.Value as string;
+
+    // Trims, drops blanks and removes case-insensitive duplicates while keeping declaration order.
+    private static string[] NormalizeKeywords(System.Collections.Generic.IEnumerable<string?> raw)
+    {
+        var seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new System.Collections.Generic.List<string>();
+        foreach (var k in raw)
+        {
+            if (string.IsNullOrWhiteSpace(k)) continue;
+            var t = k!.Trim();
+            if (seen.Add(t)) result.Add(t);
+        }
+        return result.ToArray();
+    }
+
+    // Tool input parameters (CancellationToken excluded) that have neither an XML <param>
+    // description nor a [Description] attribute on the parameter itself. Feeds MCPGEN005.
+    private static string[] GetUndescribedParameters(
+        System.Collections.Generic.IEnumerable<IParameterSymbol> parameters,
+        System.Collections.Generic.Dictionary<string, string> xmlDescriptions,
+        INamedTypeSymbol? cancellationTokenType)
+    {
+        return parameters
+            .Where(p => !IsCancellationToken(p.Type, cancellationTokenType))
+            .Where(p => !(xmlDescriptions.TryGetValue(p.Name, out var d) && !string.IsNullOrWhiteSpace(d)))
+            .Where(p => !HasDescriptionAttribute(p))
+            .Select(p => p.Name)
+            .ToArray();
+    }
+
+    private static bool HasDescriptionAttribute(IParameterSymbol p) =>
+        p.GetAttributes().Any(a =>
+            a.AttributeClass?.ToDisplayString() == "System.ComponentModel.DescriptionAttribute" &&
+            a.ConstructorArguments.Length > 0 &&
+            a.ConstructorArguments[0].Value is string s &&
+            !string.IsNullOrWhiteSpace(s));
 
     private static bool IsCancellationToken(ITypeSymbol type, INamedTypeSymbol? cancellationTokenType)
     {
@@ -418,6 +489,9 @@ public static class ModelBuilder
         var explicitTitle    = ReadAttrStringArg(mcpAttrSyntax, "Title");
         var allowDestructive = ReadAttrBoolArg(mcpAttrSyntax, "AllowDestructive");
         var requiredScope    = ReadAttrStringArg(mcpAttrSyntax, "RequiredScope");
+        var category         = ReadAttrStringArg(mcpAttrSyntax, "Category");
+        var keywords         = NormalizeKeywords(ReadAttrStringArrayArg(mcpAttrSyntax, "Keywords", semanticModel, ct));
+        var priority         = ReadAttrIntArg(mcpAttrSyntax, "Priority", semanticModel, ct);
 
         // Resolve enclosing namespace through the semantic model.
         var ns = GetLambdaNamespace(lambda, semanticModel);
@@ -436,6 +510,7 @@ public static class ModelBuilder
         var ctType = compilation.GetTypeByMetadataName("System.Threading.CancellationToken");
 
         var parameters = new System.Collections.Generic.List<ParameterModel>();
+        var undescribed = new System.Collections.Generic.List<string>();
         foreach (var paramSyntax in paramSyntaxes)
         {
             // No explicit type means we cannot determine the kind; skip the endpoint.
@@ -447,6 +522,7 @@ public static class ModelBuilder
             if (IsCancellationToken(paramSym.Type, ctType)) continue;
 
             parameters.Add(ParameterClassifier.Classify(paramSym, route));
+            if (!HasDescriptionAttribute(paramSym)) undescribed.Add(paramSym.Name);
         }
 
         // Description: no XML doc on lambdas; check [Description] attribute in syntax.
@@ -475,7 +551,11 @@ public static class ModelBuilder
             OutputMaxItems: null,
             Title: title,
             Location: LocationInfo.From(lambda.GetLocation()),
-            RequiredScope: requiredScope);
+            RequiredScope: requiredScope,
+            Category: string.IsNullOrWhiteSpace(category) ? null : category!.Trim(),
+            Keywords: new EquatableArray<string>(keywords),
+            Priority: priority,
+            UndescribedParameters: new EquatableArray<string>(undescribed));
     }
 
     // Finds the [McpTool] attribute in a lambda's AttributeLists.
@@ -515,6 +595,45 @@ public static class ModelBuilder
                 return lit.Token.ValueText;
         }
         return null;
+    }
+
+    // Reads a string[] named argument (e.g. Keywords = new[] { "a", "b" }, new string[] { ... }
+    // or a collection expression ["a", "b"]) from syntax. Each element is resolved through the
+    // semantic model, so const references work too; non-constant elements are skipped.
+    private static string?[] ReadAttrStringArrayArg(
+        AttributeSyntax attr, string argName, SemanticModel semanticModel, System.Threading.CancellationToken ct)
+    {
+        if (attr.ArgumentList is null) return Array.Empty<string?>();
+        foreach (var arg in attr.ArgumentList.Arguments)
+        {
+            if (arg.NameEquals?.Name.Identifier.Text != argName) continue;
+
+            System.Collections.Generic.IEnumerable<ExpressionSyntax> elements = arg.Expression switch
+            {
+                ImplicitArrayCreationExpressionSyntax ia => ia.Initializer.Expressions,
+                ArrayCreationExpressionSyntax { Initializer: not null } ac => ac.Initializer!.Expressions,
+                CollectionExpressionSyntax ce => ce.Elements.OfType<ExpressionElementSyntax>().Select(e => e.Expression),
+                _ => Enumerable.Empty<ExpressionSyntax>()
+            };
+            return elements
+                .Select(e => semanticModel.GetConstantValue(e, ct) is { HasValue: true, Value: string s } ? s : null)
+                .ToArray();
+        }
+        return Array.Empty<string?>();
+    }
+
+    // Reads an int named argument (literal, negative literal or const) from syntax; 0 when absent.
+    private static int ReadAttrIntArg(
+        AttributeSyntax attr, string argName, SemanticModel semanticModel, System.Threading.CancellationToken ct)
+    {
+        if (attr.ArgumentList is null) return 0;
+        foreach (var arg in attr.ArgumentList.Arguments)
+        {
+            if (arg.NameEquals?.Name.Identifier.Text == argName &&
+                semanticModel.GetConstantValue(arg.Expression, ct) is { HasValue: true, Value: int i })
+                return i;
+        }
+        return 0;
     }
 
     // Reads a bool literal named argument value from an attribute's argument list.
@@ -641,8 +760,11 @@ public static class ModelBuilder
         var requiredScope = mcpAttr.NamedArguments
             .FirstOrDefault(kv => kv.Key == "RequiredScope").Value.Value as string;
 
+        var (category, keywords, priority) = GetDiscoverability(mcpAttr, classAttr: null);
+
         var paramDescriptions = GetXmlParamDescriptions(handler);
         var cancellationTokenType = compilation.GetTypeByMetadataName("System.Threading.CancellationToken");
+        var undescribed = GetUndescribedParameters(handler.Parameters, paramDescriptions, cancellationTokenType);
 
         var parameters = handler.Parameters
             .Where(p => !IsCancellationToken(p.Type, cancellationTokenType))
@@ -672,6 +794,10 @@ public static class ModelBuilder
             OutputMaxItems: outputMaxItems,
             Title: title,
             Location: LocationInfo.From(handler.Locations.FirstOrDefault() ?? Location.None),
-            RequiredScope: requiredScope);
+            RequiredScope: requiredScope,
+            Category: category,
+            Keywords: new EquatableArray<string>(keywords),
+            Priority: priority,
+            UndescribedParameters: new EquatableArray<string>(undescribed));
     }
 }

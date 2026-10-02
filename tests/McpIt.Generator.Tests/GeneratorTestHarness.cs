@@ -13,6 +13,15 @@ public sealed record GeneratorResult(
 
 public static class GeneratorTestHarness
 {
+    // BCL reference assemblies matching the test's own target framework.
+#if NET8_0
+    public static IEnumerable<PortableExecutableReference> FrameworkReferences => Net80.References.All;
+#elif NET9_0
+    public static IEnumerable<PortableExecutableReference> FrameworkReferences => Net90.References.All;
+#else
+    public static IEnumerable<PortableExecutableReference> FrameworkReferences => Net100.References.All;
+#endif
+
     public static GeneratorResult Run(string source)
     {
         var parseOptions = new CSharpParseOptions(documentationMode: DocumentationMode.Parse);
@@ -37,14 +46,7 @@ public static class GeneratorTestHarness
             .Distinct()
             .Select(loc => (MetadataReference)MetadataReference.CreateFromFile(loc));
 
-#if NET8_0
-        var frameworkRefs = Net80.References.All;
-#elif NET9_0
-        var frameworkRefs = Net90.References.All;
-#else
-        var frameworkRefs = Net100.References.All;
-#endif
-        var references = frameworkRefs.Concat(extraRefs).ToArray();
+        var references = FrameworkReferences.Concat(extraRefs).ToArray();
 
         var compilation = CSharpCompilation.Create(
             assemblyName: "Tests.Generated",
