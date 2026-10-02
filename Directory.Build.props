@@ -5,7 +5,7 @@
     <Version>1.4.0</Version>
     <Authors>Tornike Matiashvili</Authors>
     <Product>McpIt</Product>
-    <Title>McpIt - ASP.NET Core endpoints to MCP tools</Title>
+    <Title>McpIt: expose ASP.NET Core APIs as MCP tools</Title>
     <Copyright>Copyright (c) 2026 Tornike Matiashvili</Copyright>
 
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -14,7 +14,7 @@
     <RepositoryType>git</RepositoryType>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
-    <PackageTags>mcp;model-context-protocol;aspnetcore;asp-net-core;roslyn;source-generator;ai;llm;tools;agents;minimal-api</PackageTags>
+    <PackageTags>mcp;model-context-protocol;mcp-server;mcp-tools;aspnetcore;asp-net-core;web-api;minimal-api;controllers;dotnet;csharp;roslyn;source-generator;ai;ai-agents;agents;llm;tools;native-aot</PackageTags>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
 
     <IncludeSymbols>true</IncludeSymbols>

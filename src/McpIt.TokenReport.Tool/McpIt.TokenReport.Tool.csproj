@@ -13,7 +13,8 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>mcp-token-report</ToolCommandName>
     <PackageId>McpIt.TokenReport.Tool</PackageId>
-    <Description>Offline token-cost analyzer for MCP servers. Reports what your MCP tools/list costs the model, with a CI budget gate. Part of McpIt.</Description>
+    <Description>Offline token-cost analyzer for any MCP server. Reads a live server or a saved tools/list JSON, reports estimated per-tool and total tokens your tool definitions cost the model, and fails a CI build over a --budget. Part of McpIt.</Description>
+    <PackageTags>mcp;model-context-protocol;mcp-server;tokens;token-count;llm;ai-agents;dotnet-tool;ci</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
