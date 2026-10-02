@@ -45,19 +45,18 @@ internal static class CatalogEmitter
 
         foreach (var m in sorted)
         {
-            sb.Append("        new global::McpIt.McpToolDescriptor(")
-              .Append(Lit(m.ToolName)).Append(", ")
-              .Append(Lit(m.Title ?? string.Empty)).Append(", ")
-              .Append(m.HasDescription ? Lit(ToolDescription(m.Description!)) : "null").Append(", ")
-              .Append(Lit(m.HttpMethod)).Append(", ")
-              .Append(Lit(m.RouteTemplate)).Append(", ")
-              .Append(m.Category is null ? "null" : Lit(m.Category)).Append(", ")
-              .Append(StringArray(m.Keywords)).Append(", ")
-              .Append(m.Priority.ToString(System.Globalization.CultureInfo.InvariantCulture)).Append(", ")
-              .Append(StringArray(m.Parameters.Select(p => p.Name))).Append(", ")
-              .Append(m.ReadOnly ? "true" : "false").Append(", ")
-              .Append(m.Destructive ? "true" : "false")
-              .Append("),\n");
+            sb.Append("        new global::McpIt.McpToolDescriptor(").Append(Lit(m.ToolName)).Append(")")
+              .Append(" { Title = ").Append(Lit(m.Title ?? string.Empty))
+              .Append(", Description = ").Append(m.HasDescription ? Lit(ToolDescription(m.Description!)) : "null")
+              .Append(", HttpMethod = ").Append(Lit(m.HttpMethod))
+              .Append(", Route = ").Append(Lit(m.RouteTemplate))
+              .Append(", Category = ").Append(m.Category is null ? "null" : Lit(m.Category))
+              .Append(", Keywords = ").Append(StringArray(m.Keywords))
+              .Append(", Priority = ").Append(m.Priority.ToString(System.Globalization.CultureInfo.InvariantCulture))
+              .Append(", Parameters = ").Append(StringArray(m.Parameters.Select(p => p.Name)))
+              .Append(", ReadOnly = ").Append(m.ReadOnly ? "true" : "false")
+              .Append(", Destructive = ").Append(m.Destructive ? "true" : "false")
+              .Append(" },\n");
         }
 
         sb.Append("""

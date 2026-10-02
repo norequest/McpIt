@@ -41,6 +41,14 @@ public static class McpToolSearchExtensions
         var options = new McpToolSearchOptions();
         configure?.Invoke(options);
 
+        foreach (var t in tools)
+        {
+            if (string.Equals(t.Name, options.ToolName, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"McpIt: the search meta-tool name '{options.ToolName}' collides with an existing " +
+                    "[McpTool]. Rename the meta-tool via McpToolSearchOptions.ToolName.");
+        }
+
         var tool = new McpToolSearchTool(new McpToolIndex(tools), options);
 
         // Register the prebuilt instance directly: the MCP server collects every McpServerTool

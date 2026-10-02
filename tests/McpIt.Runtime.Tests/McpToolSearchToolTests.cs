@@ -101,7 +101,7 @@ public class McpToolSearchToolTests
     {
         var index = new McpToolIndex(
         [
-            new McpToolDescriptor("listLots", "აუქციონი", null, "GET", "/lots", null, [], 0, [], true, false),
+            new McpToolDescriptor("listLots") { Title = "აუქციონი", Description = null, HttpMethod = "GET", Route = "/lots", Category = null, Keywords = [], Priority = 0, Parameters = [], ReadOnly = true, Destructive = false },
         ]);
         var json = new McpToolSearchTool(index, new McpToolSearchOptions()).Search("lots");
 
@@ -152,5 +152,26 @@ public class McpToolSearchToolTests
         var builder = new ServiceCollection().AddMcpServer();
         Assert.Throws<ArgumentNullException>(() => builder.WithToolSearch(null!));
         Assert.Throws<ArgumentOutOfRangeException>(() => builder.WithToolSearch([], o => o.MaxResults = 99));
+    }
+
+    [Fact]
+    public void WithToolSearch_throws_when_name_collides_with_a_catalog_tool()
+    {
+        var services = new ServiceCollection();
+        var tools = new[] { new McpToolDescriptor("search_tools") { HttpMethod = "GET", Route = "/search" } };
+
+        var ex = Assert.Throws<InvalidOperationException>(() => services.AddMcpServer().WithToolSearch(tools));
+        Assert.Contains("ToolName", ex.Message);
+        // Renaming the meta-tool resolves the clash.
+        services.AddMcpServer().WithToolSearch(tools, o => o.ToolName = "find_tools");
+    }
+
+    [Fact]
+    public void Descriptor_null_lists_become_empty()
+    {
+        var d = new McpToolDescriptor("x") { Keywords = null!, Parameters = null! };
+        Assert.Empty(d.Keywords);
+        Assert.Empty(d.Parameters);
+        Assert.Throws<ArgumentException>(() => new McpToolDescriptor(" "));
     }
 }

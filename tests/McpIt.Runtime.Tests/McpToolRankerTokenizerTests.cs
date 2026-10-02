@@ -52,4 +52,14 @@ public class McpToolRankerTokenizerTests
         var stems = forms.Select(f => McpToolRanker.Tokenize(f).Single()).Distinct().ToList();
         Assert.Single(stems);
     }
+
+    [Theory]
+    [InlineData("case", "cases")]
+    [InlineData("size", "sizes")]
+    [InlineData("base", "bases")]
+    [InlineData("order", "orders")]
+    public void Four_letter_words_fold_with_their_plural(string singular, string plural)
+    {
+        Assert.Equal(McpToolRanker.Tokenize(singular), McpToolRanker.Tokenize(plural));
+    }
 }

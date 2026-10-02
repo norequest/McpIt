@@ -18,10 +18,7 @@ public class McpToolRankerTests
         string[]? parameters = null)
     {
         var readOnly = method is "GET" or "HEAD";
-        return new McpToolDescriptor(
-            name, title, description, method, route, category,
-            keywords ?? [], priority, parameters ?? [],
-            ReadOnly: readOnly, Destructive: !readOnly);
+        return new McpToolDescriptor(name) { Title = title, Description = description, HttpMethod = method, Route = route, Category = category, Keywords = keywords ?? [], Priority = priority, Parameters = parameters ?? [], ReadOnly = readOnly, Destructive = !readOnly };
     }
 
     // A realistic 15-tool commerce API: orders, customers, invoices.
@@ -282,7 +279,7 @@ public class McpToolRankerTests
     [Fact]
     public void Null_keyword_and_parameter_lists_are_tolerated()
     {
-        var tool = new McpToolDescriptor("pingServer", "", null, "GET", "/ping", null, null!, 0, null!, true, false);
+        var tool = new McpToolDescriptor("pingServer") { Title = "", Description = null, HttpMethod = "GET", Route = "/ping", Category = null, Keywords = null!, Priority = 0, Parameters = null!, ReadOnly = true, Destructive = false };
         Assert.Equal("pingServer", McpToolRanker.Rank([tool], "ping")[0].Tool.Name);
     }
 

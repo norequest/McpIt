@@ -83,12 +83,12 @@ public class ToolCatalogTests
         // Class-level Category is the default; Keywords are trimmed, de-duplicated (case-insensitive)
         // and blanks dropped; the CancellationToken is not a tool parameter.
         Assert.Contains(
-            "new global::McpIt.McpToolDescriptor(\"getOrder\", \"Get Order\", \"Gets a single order by its identifier.\", \"GET\", \"api/orders/{id}\", \"orders\", new string[] { \"lookup\", \"find\" }, 5, new string[] { \"id\", \"expand\" }, true, false),",
+            "new global::McpIt.McpToolDescriptor(\"getOrder\") { Title = \"Get Order\", Description = \"Gets a single order by its identifier.\", HttpMethod = \"GET\", Route = \"api/orders/{id}\", Category = \"orders\", Keywords = new string[] { \"lookup\", \"find\" }, Priority = 5, Parameters = new string[] { \"id\", \"expand\" }, ReadOnly = true, Destructive = false },",
             catalog);
 
         // Action-level Category wins over the class default; explicit Title is used.
         Assert.Contains(
-            "new global::McpIt.McpToolDescriptor(\"deleteOrder\", \"Remove order\", \"Deletes an order permanently from the system.\", \"DELETE\", \"api/orders/{id}\", \"admin\", global::System.Array.Empty<string>(), 0, new string[] { \"id\" }, false, true),",
+            "new global::McpIt.McpToolDescriptor(\"deleteOrder\") { Title = \"Remove order\", Description = \"Deletes an order permanently from the system.\", HttpMethod = \"DELETE\", Route = \"api/orders/{id}\", Category = \"admin\", Keywords = global::System.Array.Empty<string>(), Priority = 0, Parameters = new string[] { \"id\" }, ReadOnly = false, Destructive = true },",
             catalog);
     }
 
@@ -112,7 +112,7 @@ public class ToolCatalogTests
         var result = GeneratorTestHarness.Run(src);
         AssertCompiles(result);
         Assert.Contains(
-            "new global::McpIt.McpToolDescriptor(\"ping\", \"Ping\", null, \"GET\", \"ping\", null, global::System.Array.Empty<string>(), 0, global::System.Array.Empty<string>(), true, false),",
+            "new global::McpIt.McpToolDescriptor(\"ping\") { Title = \"Ping\", Description = null, HttpMethod = \"GET\", Route = \"ping\", Category = null, Keywords = global::System.Array.Empty<string>(), Priority = 0, Parameters = global::System.Array.Empty<string>(), ReadOnly = true, Destructive = false },",
             Catalog(result));
     }
 
@@ -152,10 +152,10 @@ public class ToolCatalogTests
         var catalog = Catalog(result);
 
         Assert.Contains(
-            "new global::McpIt.McpToolDescriptor(\"listItems\", \"List Items\", \"Lists every item in the warehouse inventory.\", \"GET\", \"/items\", \"inventory\", new string[] { \"stock\" }, 1, new string[] { \"filter\" }, true, false),",
+            "new global::McpIt.McpToolDescriptor(\"listItems\") { Title = \"List Items\", Description = \"Lists every item in the warehouse inventory.\", HttpMethod = \"GET\", Route = \"/items\", Category = \"inventory\", Keywords = new string[] { \"stock\" }, Priority = 1, Parameters = new string[] { \"filter\" }, ReadOnly = true, Destructive = false },",
             catalog);
         Assert.Contains(
-            "new global::McpIt.McpToolDescriptor(\"createItem\", \"Create Item\", \"Creates a new item in the warehouse inventory.\", \"POST\", \"api/v2/items\", null, global::System.Array.Empty<string>(), 0, new string[] { \"name\" }, false, true),",
+            "new global::McpIt.McpToolDescriptor(\"createItem\") { Title = \"Create Item\", Description = \"Creates a new item in the warehouse inventory.\", HttpMethod = \"POST\", Route = \"api/v2/items\", Category = null, Keywords = global::System.Array.Empty<string>(), Priority = 0, Parameters = new string[] { \"name\" }, ReadOnly = false, Destructive = true },",
             catalog);
     }
 
@@ -191,10 +191,10 @@ public class ToolCatalogTests
 
         // Inline lambdas have no method name to derive a title from, so Title is empty.
         Assert.Contains(
-            "new global::McpIt.McpToolDescriptor(\"getStock\", \"\", \"Returns the stock level for a product SKU.\", \"GET\", \"/stock/{sku}\", \"inventory\", new string[] { \"quantity\", \"inventory-count\" }, -2, new string[] { \"sku\" }, true, false),",
+            "new global::McpIt.McpToolDescriptor(\"getStock\") { Title = \"\", Description = \"Returns the stock level for a product SKU.\", HttpMethod = \"GET\", Route = \"/stock/{sku}\", Category = \"inventory\", Keywords = new string[] { \"quantity\", \"inventory-count\" }, Priority = -2, Parameters = new string[] { \"sku\" }, ReadOnly = true, Destructive = false },",
             catalog);
         Assert.Contains(
-            "new global::McpIt.McpToolDescriptor(\"addStock\", \"\", null, \"POST\", \"/stock\", null, new string[] { \"restock\" }, 0, new string[] { \"amount\" }, false, true),",
+            "new global::McpIt.McpToolDescriptor(\"addStock\") { Title = \"\", Description = null, HttpMethod = \"POST\", Route = \"/stock\", Category = null, Keywords = new string[] { \"restock\" }, Priority = 0, Parameters = new string[] { \"amount\" }, ReadOnly = false, Destructive = true },",
             catalog);
     }
 

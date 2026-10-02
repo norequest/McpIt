@@ -20,7 +20,22 @@ public static class ParameterClassifier
         var typeName = p.Type.ToDisplayString(TypeFormat);
         var source = DetermineSource(p, route);
         var constraints = ExtractConstraints(p);
-        return new ParameterModel(p.Name, typeName, source, Constraints: constraints);
+        return new ParameterModel(p.Name, typeName, source, Description: GetDescriptionAttribute(p), Constraints: constraints);
+    }
+
+    // [Description("...")] on the action/handler parameter. An XML <param> description, applied
+    // by ModelBuilder after classification, takes precedence over it.
+    private static string? GetDescriptionAttribute(IParameterSymbol p)
+    {
+        foreach (var a in p.GetAttributes())
+        {
+            if (a.AttributeClass?.ToDisplayString() == "System.ComponentModel.DescriptionAttribute" &&
+                a.ConstructorArguments.Length > 0 &&
+                a.ConstructorArguments[0].Value is string s &&
+                !string.IsNullOrWhiteSpace(s))
+                return s;
+        }
+        return null;
     }
 
     private static ParameterSource DetermineSource(IParameterSymbol p, string route)

@@ -14,8 +14,12 @@ public class McpDiscoveryDocumentsTests
         bool readOnly = false,
         bool destructive = false,
         string title = "")
-        => new(name, title, description, readOnly ? "GET" : "POST", "/" + name, category,
-            keywords ?? Array.Empty<string>(), priority, Array.Empty<string>(), readOnly, destructive);
+        => new(name)
+        {
+            Title = title, Description = description, HttpMethod = readOnly ? "GET" : "POST", Route = "/" + name,
+            Category = category, Keywords = keywords ?? Array.Empty<string>(), Priority = priority,
+            ReadOnly = readOnly, Destructive = destructive,
+        };
 
     internal static IReadOnlyList<McpToolDescriptor> SampleTools() => new[]
     {
@@ -330,12 +334,25 @@ public class McpDiscoveryDocumentsTests
     }
 
     [Fact]
-    public void LlmsTxt_falls_back_to_title_when_description_missing_and_skips_nameless_tools()
+    public void LlmsTxt_falls_back_to_title_when_description_missing()
     {
-        var tools = new[] { Tool("titled", null, title: "Has a title"), Tool("  ", "ignored") };
+        // Nameless tools cannot exist: the McpToolDescriptor constructor rejects them.
+        var tools = new[] { Tool("titled", null, title: "Has a title") };
         var text = McpDiscoveryDocuments.BuildLlmsTxt(tools, Options());
 
         Assert.Contains("- [titled](/mcp): Has a title\n", text);
-        Assert.DoesNotContain("ignored", text);
+    }
+
+    [Fact]
+    public void ServerCard_shortening_never_splits_a_surrogate_pair()
+    {
+        // 99 chars then an astral emoji straddling the 100-char cut, no spaces to break on.
+        var text = new string('a', 98) + "\U0001F600" + new string('b', 20);
+        var json = McpDiscoveryDocuments.BuildServerCard(SampleTools(), Options(o => o.Description = text));
+
+        using var doc = JsonDocument.Parse(json);
+        var description = doc.RootElement.GetProperty("description").GetString()!;
+        Assert.True(description.Length <= 100, $"length {description.Length}");
+        Assert.False(char.IsHighSurrogate(description[^2]));
     }
 }

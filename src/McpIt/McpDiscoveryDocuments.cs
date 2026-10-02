@@ -347,6 +347,8 @@ public static class McpDiscoveryDocuments
         if (value.Length <= max) return value;
         var cut = value.LastIndexOf(' ', max - 1);
         if (cut < max / 2) cut = max - 1;
+        // Never split a surrogate pair: Utf8JsonWriter rejects a lone high surrogate.
+        if (cut > 0 && char.IsHighSurrogate(value[cut - 1])) cut--;
         return value.Substring(0, cut).TrimEnd() + "…";
     }
 

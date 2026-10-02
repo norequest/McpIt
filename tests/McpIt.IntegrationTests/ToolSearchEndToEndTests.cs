@@ -16,12 +16,12 @@ public sealed class ToolSearchEndToEndTests : IAsyncLifetime
 {
     private static readonly McpToolDescriptor[] Catalog =
     [
-        new("listOrders", "List Orders", "Lists orders, newest first.", "GET", "/api/orders", "orders", [], 0, ["status"], true, false),
-        new("getOrder", "Get Order by ID", "Gets one order.", "GET", "/api/orders/{id}", "orders", [], 0, ["id"], true, false),
-        new("cancelOrder", "Cancel Order", "Cancels an order that has not shipped.", "POST", "/api/orders/{id}/cancel", "orders", [], 0, ["id", "reason"], false, true),
-        new("deleteOrder", "Delete Order", "Permanently deletes an order.", "DELETE", "/api/orders/{id}", "orders", [], 0, ["id"], false, true),
-        new("listCustomers", "List Customers", "Lists customers.", "GET", "/api/customers", "customers", [], 0, ["page"], true, false),
-        new("refundInvoice", "Refund Invoice", "Refunds a paid invoice.", "POST", "/api/invoices/{id}/refund", "billing", ["money back"], 0, ["id", "amount"], false, true),
+        new("listOrders") { Title = "List Orders", Description = "Lists orders, newest first.", HttpMethod = "GET", Route = "/api/orders", Category = "orders", Keywords = [], Priority = 0, Parameters = ["status"], ReadOnly = true, Destructive = false },
+        new("getOrder") { Title = "Get Order by ID", Description = "Gets one order.", HttpMethod = "GET", Route = "/api/orders/{id}", Category = "orders", Keywords = [], Priority = 0, Parameters = ["id"], ReadOnly = true, Destructive = false },
+        new("cancelOrder") { Title = "Cancel Order", Description = "Cancels an order that has not shipped.", HttpMethod = "POST", Route = "/api/orders/{id}/cancel", Category = "orders", Keywords = [], Priority = 0, Parameters = ["id", "reason"], ReadOnly = false, Destructive = true },
+        new("deleteOrder") { Title = "Delete Order", Description = "Permanently deletes an order.", HttpMethod = "DELETE", Route = "/api/orders/{id}", Category = "orders", Keywords = [], Priority = 0, Parameters = ["id"], ReadOnly = false, Destructive = true },
+        new("listCustomers") { Title = "List Customers", Description = "Lists customers.", HttpMethod = "GET", Route = "/api/customers", Category = "customers", Keywords = [], Priority = 0, Parameters = ["page"], ReadOnly = true, Destructive = false },
+        new("refundInvoice") { Title = "Refund Invoice", Description = "Refunds a paid invoice.", HttpMethod = "POST", Route = "/api/invoices/{id}/refund", Category = "billing", Keywords = ["money back"], Priority = 0, Parameters = ["id", "amount"], ReadOnly = false, Destructive = true },
     ];
 
     private WebApplication? _app;

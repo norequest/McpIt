@@ -154,7 +154,8 @@ public static class McpToolRanker
             IsConsonant(w[w.Length - 1]) && w[w.Length - 1] is not ('l' or 's' or 'z'))
             w = w.Substring(0, w.Length - 1);
 
-        if (w.Length > 4 && w[w.Length - 1] == 'e')
+        // ">= 4" so a 4-letter word folds with its "-es" plural ("case"/"cases" -> "cas").
+        if (w.Length >= 4 && w[w.Length - 1] == 'e')
             w = w.Substring(0, w.Length - 1);
 
         return w;
@@ -196,52 +197,52 @@ public sealed class McpToolIndex
     // description is long and noisy; route and parameter names are weak supporting evidence.
 
     /// <summary>Weight of a term occurring in the tool name.</summary>
-    public const double NameWeight = 6.0;
+    internal const double NameWeight = 6.0;
     /// <summary>Weight of a term occurring in the tool's declared keywords.</summary>
-    public const double KeywordWeight = 3.0;
+    internal const double KeywordWeight = 3.0;
     /// <summary>Weight of a term occurring in the tool title.</summary>
-    public const double TitleWeight = 2.5;
+    internal const double TitleWeight = 2.5;
     /// <summary>Weight of a term occurring in the tool category.</summary>
-    public const double CategoryWeight = 2.0;
+    internal const double CategoryWeight = 2.0;
     /// <summary>Weight of a term occurring in the tool description.</summary>
-    public const double DescriptionWeight = 1.0;
+    internal const double DescriptionWeight = 1.0;
     /// <summary>Weight of a term occurring in the route template.</summary>
-    public const double RouteWeight = 1.0;
+    internal const double RouteWeight = 1.0;
     /// <summary>Weight of a term occurring in a parameter name.</summary>
-    public const double ParameterWeight = 0.5;
+    internal const double ParameterWeight = 0.5;
 
     // ---- BM25 parameters. ----
 
     /// <summary>BM25 term-frequency saturation. Higher than the textbook 1.2 because weighted
     /// frequencies are larger, and a name hit should stay clearly ahead of a description hit.</summary>
-    public const double K1 = 2.0;
+    internal const double K1 = 2.0;
     /// <summary>BM25 length normalization. Moderate, so a long description is only mildly
     /// penalized.</summary>
-    public const double B = 0.5;
+    internal const double B = 0.5;
 
     // ---- Bonuses and nudges. ----
 
     /// <summary>Added when the whole query is the tool's name ("getOrderById",
     /// "get order by id").</summary>
-    public const double ExactNameBonus = 10.0;
+    internal const double ExactNameBonus = 10.0;
     /// <summary>Added when the normalized tool name starts with the whole query ("getOrder"
     /// for "getOrderById"). Queries shorter than <see cref="MinPrefixLength"/> never qualify.</summary>
-    public const double NamePrefixBonus = 2.0;
+    internal const double NamePrefixBonus = 2.0;
     /// <summary>Fraction of a full match credited when a query term is only a prefix of an
     /// indexed term ("cancel" in "cancellation").</summary>
-    public const double PrefixMatchFactor = 0.5;
+    internal const double PrefixMatchFactor = 0.5;
     /// <summary>Minimum query-term length that may match by prefix.</summary>
-    public const int MinPrefixLength = 3;
+    internal const int MinPrefixLength = 3;
     /// <summary>Multiplier bonus (1 + this) for tools whose HTTP verb fits the query's intent.
     /// Large enough to separate getOrder from deleteOrder for "remove an order", too small to
     /// override a clearly better text match.</summary>
-    public const double VerbIntentBoost = 0.25;
+    internal const double VerbIntentBoost = 0.25;
     /// <summary>Multiplier bonus per point of <see cref="McpToolDescriptor.Priority"/>
     /// (clamped to +/- <see cref="MaxPriorityEffect"/> points), so priority mostly breaks
     /// near-ties.</summary>
-    public const double PriorityBoostPerPoint = 0.02;
+    internal const double PriorityBoostPerPoint = 0.02;
     /// <summary>Priority values beyond this magnitude have no additional effect.</summary>
-    public const int MaxPriorityEffect = 10;
+    internal const int MaxPriorityEffect = 10;
 
     private readonly McpToolDescriptor[] _tools;
     private readonly double[] _docLength;
