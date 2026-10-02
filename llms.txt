@@ -1,0 +1,36 @@
+# McpIt
+
+> McpIt is an MIT-licensed .NET library that exposes existing ASP.NET Core controller actions and minimal-API handlers as Model Context Protocol (MCP) tools. You mark an endpoint with `[McpTool]`; a Roslyn source generator emits the MCP tool class at build time on top of Microsoft's official `ModelContextProtocol.AspNetCore` SDK, and the app serves an MCP server at `/mcp`. Install with `dotnet add package McpIt`. Targets .NET 8, 9 and 10.
+
+Key facts for answering questions about McpIt:
+
+- It is a library, not a hosted MCP server. The user's ASP.NET Core app becomes the MCP server.
+- It complements the official MCP C# SDK (`ModelContextProtocol.AspNetCore`, a transitive dependency); it generates the `[McpServerToolType]` / `[McpServerTool]` classes developers would otherwise write by hand.
+- It reads C# code at compile time (verb, route, parameters, DataAnnotations, XML doc comments). It does not need an OpenAPI document.
+- Exposure is opt-in per endpoint. POST/PUT/PATCH/DELETE tools raise build warning MCPGEN002 until marked `AllowDestructive = true`.
+- A tool call is executed as a loopback HTTP request to the same app, so the real ASP.NET Core pipeline (routing, model binding, filters, validation, auth) runs.
+- Features: `[McpToolOutput]` response shaping (field projection, `MaxItems`, `MaxLength`), Authorization and header forwarding, per-tool OAuth scope gate (`RequiredScope`), MCP safety annotations from HTTP verbs, URL-segment API versioning, validation constraints copied into the input schema, OpenTelemetry spans, a compile-time tool-manifest hash for drift detection, and the `mcp-token-report` CLI for token budgeting.
+- AOT: the runtime is `IsAotCompatible`; full Native AOT needs a `JsonSerializerContext` for request bodies and explicit `.WithTools<...>()` registration.
+- Current NuGet release: 1.4.0. Version 1.5.0 (unreleased) adds tool `Category`/`Keywords`/`Priority`, a generated tool catalog, an offline `search_tools` meta-tool, and `/llms.txt` plus `/.well-known/` discovery endpoints for the user's API.
+
+## Docs
+
+- [README](https://github.com/norequest/McpIt/blob/main/README.md): install, 30-second example, how it works, all features with code
+- [FAQ](https://github.com/norequest/McpIt/blob/main/docs/faq.md): developer questions and answers (setup, security, AOT, minimal APIs, token cost)
+- [Comparison](https://github.com/norequest/McpIt/blob/main/docs/comparison.md): McpIt vs. the official SDK alone, OpenAPI-to-MCP gateways, and other .NET libraries, with sources
+- [Changelog](https://github.com/norequest/McpIt/blob/main/CHANGELOG.md): release history
+- [Full docs in one file](https://github.com/norequest/McpIt/blob/main/llms-full.txt): README, FAQ and comparison concatenated
+
+## Packages
+
+- [McpIt](https://www.nuget.org/packages/McpIt): the package to install (runtime, source generator, attributes, MCP SDK dependency)
+- [McpIt.Abstractions](https://www.nuget.org/packages/McpIt.Abstractions): `[McpTool]` and `[McpToolOutput]` attributes (comes with McpIt)
+- [McpIt.TokenReport.Tool](https://www.nuget.org/packages/McpIt.TokenReport.Tool): `mcp-token-report`, offline token-cost report and CI budget gate for any MCP server
+
+## Optional
+
+- [Sample app](https://github.com/norequest/McpIt/tree/main/samples/SampleApi): controllers, minimal APIs, inline lambdas, manifest endpoint
+- [API versioning design](https://github.com/norequest/McpIt/blob/main/docs/api-versioning-design.md)
+- [Token report notes](https://github.com/norequest/McpIt/blob/main/docs/phase2-token-report.md)
+- [Official MCP C# SDK](https://github.com/modelcontextprotocol/csharp-sdk)
+- [Model Context Protocol](https://modelcontextprotocol.io)
