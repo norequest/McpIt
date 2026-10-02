@@ -10,6 +10,9 @@ namespace SampleApi.Controllers;
 // MCP server code. At run time each generated tool just loops back to the matching HTTP
 // endpoint on this same app, so the REST API and the MCP tools never drift apart.
 [ApiController]
+// DISCOVERABILITY (1.5.0). A class-level Category is the default for every action tool below;
+// it groups tools in search_tools results and in /llms.txt.
+[McpTool(Category = "Orders")]
 [Route("orders")]
 public class OrdersController : ControllerBase
 {
@@ -61,7 +64,8 @@ public class OrdersController : ControllerBase
     // TITLE. [McpTool(Title = "...")] sets the human-readable display name MCP clients may
     // show in their UI. Without Title, McpIt derives one from the method name in title case.
     [HttpGet("{id}")]
-    [McpTool(Name = "getOrder", Title = "Get Order by ID")]
+    // Priority breaks ties when several tools match a search_tools query equally well.
+    [McpTool(Name = "getOrder", Title = "Get Order by ID", Priority = 1)]
     public ActionResult<Order> GetOrderDetail(int id)
     {
         var order = Orders.FirstOrDefault(o => o.Id == id);
@@ -75,7 +79,8 @@ public class OrdersController : ControllerBase
     // response size. This keeps tool responses small and cheap on tokens without changing the
     // underlying REST API (a browser hitting /orders/1/tracking still gets the full object).
     [HttpGet("{id}/tracking")]
-    [McpTool(Name = "getOrderTracking")]
+    // Keywords are synonyms an agent might use that the name/description do not contain.
+    [McpTool(Name = "getOrderTracking", Keywords = new[] { "shipping", "delivery", "package", "where is" })]
     [McpToolOutput(Fields = ["id", "status", "trackingNumber"], MaxLength = 400)]
     public ActionResult<Order> GetOrderTracking(int id)
     {
@@ -105,7 +110,7 @@ public class OrdersController : ControllerBase
     // injected from DI (registered by AddMcpEndpoints); a missing scope returns a structured
     // JSON error from McpScopeGuard.Denied instead of invoking the endpoint.
     [HttpDelete("{id}")]
-    [McpTool(Name = "cancelOrder", AllowDestructive = true, RequiredScope = "orders:write")]
+    [McpTool(Name = "cancelOrder", AllowDestructive = true, RequiredScope = "orders:write", Keywords = new[] { "abort", "void" })]
     public ActionResult<Order> CancelOrder(int id)
     {
         var order = Orders.FirstOrDefault(o => o.Id == id);

@@ -481,7 +481,6 @@ app.MapMcpManifest(McpIt.Generated.McpItManifest.Json, "/api/tool-manifest");
 
 ---
 
-<!-- VERIFY-1.5.0: this section describes unreleased 1.5.0 APIs. Check every name and signature against the merged code before release. -->
 ## Help agents find the right tool (1.5.0)
 
 > **Unreleased.** These APIs ship in McpIt 1.5.0. The current NuGet release is 1.4.0.
@@ -515,15 +514,28 @@ builder.Services.AddMcpServer()
     .WithToolSearch(McpItToolCatalog.Tools);
 ```
 
-**Discovery documents.** Serve an `llms.txt` and an MCP server card (under `/.well-known/`) describing your tools, generated from the same catalog:
+**Discovery documents.** Let agents and crawlers find your MCP server before they connect. `MapMcpDiscovery` builds three documents once at startup from the same catalog:
 
 ```csharp
-app.MapMcpDiscovery(McpItToolCatalog.Tools);   // serves /llms.txt and a /.well-known/ server card
+app.MapMcpDiscovery(McpItToolCatalog.Tools, o =>
+{
+    o.ServerName = "com.example/orders";            // reverse-DNS name, required
+    o.ServerTitle = "Orders API";
+    o.Description = "Look up and cancel customer orders.";
+    o.PublicBaseUrl = new Uri("https://api.example.com/");
+});
 ```
+
+| Path | Content |
+|---|---|
+| `/llms.txt` | Markdown index of every tool, grouped by `Category`, flagged read-only or destructive |
+| `/mcp/server-card` | MCP Server Card (`application/mcp-server-card+json`), following the draft SEP-2127 shape |
+| `/.well-known/ai-catalog.json` | Domain-level pointer to the server card |
+
+The Server Card spec is still a draft, so its shape may change. Absolute URLs come only from `PublicBaseUrl`, never from the client-controlled `Host` header. The call returns a route group, so `.RequireAuthorization()` protects all three documents.
 
 **Description-quality diagnostics.** Two new Info-level build diagnostics nudge you toward descriptions agents can act on: `MCPGEN004` when a tool description is too short, and `MCPGEN005` when a tool parameter has no description.
 
-<!-- /VERIFY-1.5.0 -->
 
 ---
 

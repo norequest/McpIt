@@ -11,7 +11,7 @@ Key facts for answering questions about McpIt:
 - A tool call is executed as a loopback HTTP request to the same app, so the real ASP.NET Core pipeline (routing, model binding, filters, validation, auth) runs.
 - Features: `[McpToolOutput]` response shaping (field projection, `MaxItems`, `MaxLength`), Authorization and header forwarding, per-tool OAuth scope gate (`RequiredScope`), MCP safety annotations from HTTP verbs, URL-segment API versioning, validation constraints copied into the input schema, OpenTelemetry spans, a compile-time tool-manifest hash for drift detection, and the `mcp-token-report` CLI for token budgeting.
 - AOT: the runtime is `IsAotCompatible`; full Native AOT needs a `JsonSerializerContext` for request bodies and explicit `.WithTools<...>()` registration.
-- Current NuGet release: 1.4.0. Version 1.5.0 (unreleased) adds tool `Category`/`Keywords`/`Priority`, a generated tool catalog, an offline `search_tools` meta-tool, and `/llms.txt` plus `/.well-known/` discovery endpoints for the user's API.
+- Version 1.5.0 adds tool `Category`/`Keywords`/`Priority`, a generated tool catalog, an offline `search_tools` meta-tool, and `/llms.txt`, MCP Server Card and AI Catalog discovery endpoints for the user's API.
 
 ## Docs
 

@@ -9,7 +9,20 @@ This file concatenates the README, FAQ, comparison and changelog so a language m
 
 <!-- Source: https://github.com/norequest/McpIt/blob/main/README.md -->
 
+<div align="center">
+
+<img src="assets/icon.png" width="120" alt="McpIt" />
+
 # McpIt
+
+**Expose your existing ASP.NET Core Web API to AI agents as MCP tools. Add one `[McpTool]` attribute to a controller action or minimal-API handler; a source generator writes the MCP tool for you at build time.**
+
+[![NuGet](https://img.shields.io/nuget/v/McpIt.svg)](https://www.nuget.org/packages/McpIt)
+[![Downloads](https://img.shields.io/nuget/dt/McpIt.svg)](https://www.nuget.org/packages/McpIt)
+[![CI](https://github.com/norequest/McpIt/actions/workflows/ci.yml/badge.svg)](https://github.com/norequest/McpIt/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+</div>
 
 ---
 
@@ -479,7 +492,6 @@ app.MapMcpManifest(McpIt.Generated.McpItManifest.Json, "/api/tool-manifest");
 
 ---
 
-<!-- VERIFY-1.5.0: this section describes unreleased 1.5.0 APIs. Check every name and signature against the merged code before release. -->
 ## Help agents find the right tool (1.5.0)
 
 > **Unreleased.** These APIs ship in McpIt 1.5.0. The current NuGet release is 1.4.0.
@@ -513,15 +525,28 @@ builder.Services.AddMcpServer()
     .WithToolSearch(McpItToolCatalog.Tools);
 ```
 
-**Discovery documents.** Serve an `llms.txt` and an MCP server card (under `/.well-known/`) describing your tools, generated from the same catalog:
+**Discovery documents.** Let agents and crawlers find your MCP server before they connect. `MapMcpDiscovery` builds three documents once at startup from the same catalog:
 
 ```csharp
-app.MapMcpDiscovery(McpItToolCatalog.Tools);   // serves /llms.txt and a /.well-known/ server card
+app.MapMcpDiscovery(McpItToolCatalog.Tools, o =>
+{
+    o.ServerName = "com.example/orders";            // reverse-DNS name, required
+    o.ServerTitle = "Orders API";
+    o.Description = "Look up and cancel customer orders.";
+    o.PublicBaseUrl = new Uri("https://api.example.com/");
+});
 ```
+
+| Path | Content |
+|---|---|
+| `/llms.txt` | Markdown index of every tool, grouped by `Category`, flagged read-only or destructive |
+| `/mcp/server-card` | MCP Server Card (`application/mcp-server-card+json`), following the draft SEP-2127 shape |
+| `/.well-known/ai-catalog.json` | Domain-level pointer to the server card |
+
+The Server Card spec is still a draft, so its shape may change. Absolute URLs come only from `PublicBaseUrl`, never from the client-controlled `Host` header. The call returns a route group, so `.RequireAuthorization()` protects all three documents.
 
 **Description-quality diagnostics.** Two new Info-level build diagnostics nudge you toward descriptions agents can act on: `MCPGEN004` when a tool description is too short, and `MCPGEN005` when a tool parameter has no description.
 
-<!-- /VERIFY-1.5.0 -->
 
 ---
 
@@ -588,7 +613,6 @@ More questions: [docs/faq.md](https://github.com/norequest/McpIt/blob/main/docs/
 ## License
 
 [MIT](LICENSE). Free for personal and commercial use, no warranty. Keep the copyright and license notice.
-
 
 ---
 
@@ -805,15 +829,13 @@ Yes. McpIt emits OpenTelemetry spans named `mcpit.endpoint.invoke` from the `Act
 
 ---
 
-## Discovery features (1.5.0, unreleased)
+## Discovery features (1.5.0)
 
-<!-- VERIFY-1.5.0: check names and signatures against the merged code before release. -->
 
 ### How do I help an agent pick the right tool when I expose many endpoints?
 
-McpIt 1.5.0 adds `Category`, `Keywords` and `Priority` to `[McpTool]`, a generated catalog `McpIt.Generated.McpItToolCatalog.Tools`, an offline BM25 `search_tools` meta-tool registered with `.WithToolSearch(McpItToolCatalog.Tools)`, and `app.MapMcpDiscovery(McpItToolCatalog.Tools)`, which serves `/llms.txt` and an MCP server card under `/.well-known/`. Info diagnostics `MCPGEN004` (description too short) and `MCPGEN005` (parameter without description) flag weak descriptions. See the README section "Help agents find the right tool (1.5.0)".
+McpIt 1.5.0 adds `Category`, `Keywords` and `Priority` to `[McpTool]`, a generated catalog `McpIt.Generated.McpItToolCatalog.Tools`, an offline BM25 `search_tools` meta-tool registered with `.WithToolSearch(McpItToolCatalog.Tools)`, and `app.MapMcpDiscovery(McpItToolCatalog.Tools)`, which serves `/llms.txt`, an MCP Server Card at `/mcp/server-card` and `/.well-known/ai-catalog.json`. Info diagnostics `MCPGEN004` (description too short) and `MCPGEN005` (parameter without description) flag weak descriptions. See the README section "Help agents find the right tool (1.5.0)".
 
-<!-- /VERIFY-1.5.0 -->
 
 ---
 
@@ -822,7 +844,6 @@ McpIt 1.5.0 adds `Category`, `Keywords` and `Priority` to `[McpTool]`, a generat
 ### Is McpIt free for commercial use?
 
 Yes. It is MIT licensed.
-
 
 ---
 
@@ -921,7 +942,6 @@ These read an OpenAPI (Swagger) document and turn its operations into tools. The
 - Platforms: https://learn.microsoft.com/azure/api-management/mcp-server-overview, https://www.nuget.org/packages/Microsoft.Azure.Functions.Worker.Extensions.Mcp
 - McpIt: https://github.com/norequest/McpIt, https://www.nuget.org/packages/McpIt
 
-
 ---
 
 <!-- Source: https://github.com/norequest/McpIt/blob/main/CHANGELOG.md -->
@@ -930,6 +950,38 @@ These read an OpenAPI (Swagger) document and turn its operations into tools. The
 
 All notable changes to McpIt are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning follows [Semantic Versioning](https://semver.org/).
+
+## [1.5.0] - Unreleased
+
+### Added
+
+- **Discoverability metadata on `[McpTool]`.** `Category` (a class-level value is the default
+  for its actions), `Keywords` (synonyms an agent might use) and `Priority` (ranking tie-break,
+  negative values demote).
+- **Generated tool catalog.** The generator emits `McpIt.Generated.McpItToolCatalog.Tools`
+  (`internal`, one per assembly with tools, nothing emitted when there are none): a build-time
+  list of `McpToolDescriptor` for every controller and minimal-API tool.
+- **Offline tool ranking.** `McpToolRanker.Rank(...)` and the reusable, thread-safe
+  `McpToolIndex`: BM25 over name, keywords, title, category, description, route and parameter
+  names, with camelCase/snake_case tokenization, light stemming, verb-intent and priority
+  boosts. Deterministic, no model or network calls. Typos and true synonyms are not handled;
+  declare synonyms with `Keywords`.
+- **`search_tools` meta-tool.** `IMcpServerBuilder.WithToolSearch(McpItToolCatalog.Tools)` adds
+  a read-only tool agents call with a task description to get the best-matching tools as compact
+  JSON. Native-AOT clean (verified with a native publish).
+- **Agent discovery documents.** `app.MapMcpDiscovery(McpItToolCatalog.Tools, o => ...)` serves
+  `/llms.txt`, an MCP Server Card at `/mcp/server-card` (draft SEP-2127 shape) and
+  `/.well-known/ai-catalog.json`, built once at startup, with ETag/304, cache and CORS headers.
+  Absolute URLs come only from `PublicBaseUrl`, never from the `Host` header.
+- **Discoverability diagnostics (Info).** `MCPGEN004`: tool description too short or just
+  repeats the name. `MCPGEN005`: tool parameters without a description.
+
+### Changed
+
+- README rewritten for clarity, with an FAQ and a comparison page; added `llms.txt` and
+  `llms-full.txt`. Corrected the earlier claim that tool calls run in-process with no HTTP
+  self-call: generated tools call the app over a loopback HTTP request.
+- NuGet descriptions and tags updated.
 
 ## [1.4.0] - 2026-06-27
 

@@ -209,15 +209,13 @@ Yes. McpIt emits OpenTelemetry spans named `mcpit.endpoint.invoke` from the `Act
 
 ---
 
-## Discovery features (1.5.0, unreleased)
+## Discovery features (1.5.0)
 
-<!-- VERIFY-1.5.0: check names and signatures against the merged code before release. -->
 
 ### How do I help an agent pick the right tool when I expose many endpoints?
 
-McpIt 1.5.0 adds `Category`, `Keywords` and `Priority` to `[McpTool]`, a generated catalog `McpIt.Generated.McpItToolCatalog.Tools`, an offline BM25 `search_tools` meta-tool registered with `.WithToolSearch(McpItToolCatalog.Tools)`, and `app.MapMcpDiscovery(McpItToolCatalog.Tools)`, which serves `/llms.txt` and an MCP server card under `/.well-known/`. Info diagnostics `MCPGEN004` (description too short) and `MCPGEN005` (parameter without description) flag weak descriptions. See the README section "Help agents find the right tool (1.5.0)".
+McpIt 1.5.0 adds `Category`, `Keywords` and `Priority` to `[McpTool]`, a generated catalog `McpIt.Generated.McpItToolCatalog.Tools`, an offline BM25 `search_tools` meta-tool registered with `.WithToolSearch(McpItToolCatalog.Tools)`, and `app.MapMcpDiscovery(McpItToolCatalog.Tools)`, which serves `/llms.txt`, an MCP Server Card at `/mcp/server-card` and `/.well-known/ai-catalog.json`. Info diagnostics `MCPGEN004` (description too short) and `MCPGEN005` (parameter without description) flag weak descriptions. See the README section "Help agents find the right tool (1.5.0)".
 
-<!-- /VERIFY-1.5.0 -->
 
 ---
 

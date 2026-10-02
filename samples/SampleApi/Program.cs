@@ -13,7 +13,10 @@ builder.Services.AddSwaggerGen();
 // Stateless mode keeps testing simple (no Mcp-Session-Id handshake needed).
 builder.Services.AddMcpServer()
     .WithHttpTransport(options => options.Stateless = true)
-    .WithToolsFromAssembly();
+    .WithToolsFromAssembly()
+    // search_tools meta-tool (1.5.0): agents describe the task, McpIt ranks the generated tools
+    // offline (BM25 over McpItToolCatalog, no model or network calls) and returns the best matches.
+    .WithToolSearch(McpIt.Generated.McpItToolCatalog.Tools);
 
 // AOT-ready body serialization: supplying a JsonSerializerContext makes the loopback
 // request-body path reflection-free and Native-AOT / trim safe. Omitting SerializerOptions
@@ -54,6 +57,18 @@ app.MapMcp("/mcp");
 //   - ToolNames     : alphabetically sorted array of all tool names.
 // Serve it at GET /mcp/manifest so CI and clients can snapshot and compare hashes.
 app.MapMcpManifest(McpIt.Generated.McpItManifest.Json);
+
+// AGENT DISCOVERY DOCUMENTS (1.5.0), built once from the generated catalog:
+//   GET /llms.txt                     markdown index of every tool, grouped by Category
+//   GET /mcp/server-card              MCP Server Card (draft SEP-2127 shape)
+//   GET /.well-known/ai-catalog.json  domain-level pointer to the server card
+// Set PublicBaseUrl in production; URLs are never derived from the client-controlled Host header.
+app.MapMcpDiscovery(McpIt.Generated.McpItToolCatalog.Tools, o =>
+{
+    o.ServerName = "io.github.norequest/mcpit-sample";
+    o.ServerTitle = "McpIt Sample Orders API";
+    o.Description = "Look up, search, annotate and cancel sample orders.";
+});
 
 // MINIMAL-API: METHOD-GROUPS, MapGroup PREFIX CHAINS, AND INLINE LAMBDAS.
 // Three supported shapes for minimal-API MCP tools:

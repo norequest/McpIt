@@ -2,7 +2,7 @@
 
   <!-- Shared NuGet package metadata for all packable projects. -->
   <PropertyGroup>
-    <Version>1.4.0</Version>
+    <Version>1.5.0</Version>
     <Authors>Tornike Matiashvili</Authors>
     <Product>McpIt</Product>
     <Title>McpIt: expose ASP.NET Core APIs as MCP tools</Title>

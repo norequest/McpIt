@@ -3,6 +3,38 @@
 All notable changes to McpIt are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning follows [Semantic Versioning](https://semver.org/).
 
+## [1.5.0] - Unreleased
+
+### Added
+
+- **Discoverability metadata on `[McpTool]`.** `Category` (a class-level value is the default
+  for its actions), `Keywords` (synonyms an agent might use) and `Priority` (ranking tie-break,
+  negative values demote).
+- **Generated tool catalog.** The generator emits `McpIt.Generated.McpItToolCatalog.Tools`
+  (`internal`, one per assembly with tools, nothing emitted when there are none): a build-time
+  list of `McpToolDescriptor` for every controller and minimal-API tool.
+- **Offline tool ranking.** `McpToolRanker.Rank(...)` and the reusable, thread-safe
+  `McpToolIndex`: BM25 over name, keywords, title, category, description, route and parameter
+  names, with camelCase/snake_case tokenization, light stemming, verb-intent and priority
+  boosts. Deterministic, no model or network calls. Typos and true synonyms are not handled;
+  declare synonyms with `Keywords`.
+- **`search_tools` meta-tool.** `IMcpServerBuilder.WithToolSearch(McpItToolCatalog.Tools)` adds
+  a read-only tool agents call with a task description to get the best-matching tools as compact
+  JSON. Native-AOT clean (verified with a native publish).
+- **Agent discovery documents.** `app.MapMcpDiscovery(McpItToolCatalog.Tools, o => ...)` serves
+  `/llms.txt`, an MCP Server Card at `/mcp/server-card` (draft SEP-2127 shape) and
+  `/.well-known/ai-catalog.json`, built once at startup, with ETag/304, cache and CORS headers.
+  Absolute URLs come only from `PublicBaseUrl`, never from the `Host` header.
+- **Discoverability diagnostics (Info).** `MCPGEN004`: tool description too short or just
+  repeats the name. `MCPGEN005`: tool parameters without a description.
+
+### Changed
+
+- README rewritten for clarity, with an FAQ and a comparison page; added `llms.txt` and
+  `llms-full.txt`. Corrected the earlier claim that tool calls run in-process with no HTTP
+  self-call: generated tools call the app over a loopback HTTP request.
+- NuGet descriptions and tags updated.
+
 ## [1.4.0] - 2026-06-27
 
 ### Added
