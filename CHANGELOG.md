@@ -12,7 +12,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning fol
   negative values demote).
 - **Generated tool catalog.** The generator emits `McpIt.Generated.McpItToolCatalog.Tools`
   (`internal`, one per assembly with tools, nothing emitted when there are none): a build-time
-  list of `McpToolDescriptor` for every controller and minimal-API tool.
+  list of `McpToolDescriptor` for every controller and minimal-API tool. Because it is
+  `internal`, pass it directly only from the project that contains the `[McpTool]` endpoints;
+  for tools in a class library, expose it from that library (for example a public static
+  property returning `McpItToolCatalog.Tools`) and pass that in.
 - **Offline tool ranking.** `McpToolRanker.Rank(...)` and the reusable, thread-safe
   `McpToolIndex`: BM25 over name, keywords, title, category, description, route and parameter
   names, with camelCase/snake_case tokenization, light stemming, verb-intent and priority
@@ -20,20 +23,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning fol
   declare synonyms with `Keywords`.
 - **`search_tools` meta-tool.** `IMcpServerBuilder.WithToolSearch(McpItToolCatalog.Tools)` adds
   a read-only tool agents call with a task description to get the best-matching tools as compact
-  JSON. Native-AOT clean (verified with a native publish).
+  JSON. It registers a prebuilt `McpServerTool` instance, with no reflection or type scanning,
+  and the runtime library passes the trim and AOT analyzer gate.
 - **Agent discovery documents.** `app.MapMcpDiscovery(McpItToolCatalog.Tools, o => ...)` serves
   `/llms.txt`, an MCP Server Card at `/mcp/server-card` (draft SEP-2127 shape) and
   `/.well-known/ai-catalog.json`, built once at startup, with ETag/304, cache and CORS headers.
-  Absolute URLs come only from `PublicBaseUrl`, never from the `Host` header.
-- **Discoverability diagnostics (Info).** `MCPGEN004`: tool description too short or just
-  repeats the name. `MCPGEN005`: tool parameters without a description.
+  Absolute URLs come only from `PublicBaseUrl`, never from the `Host` header. `ServerName` is
+  required while the Server Card is enabled (the default); mapping throws without it.
+- **Discoverability diagnostics (Info).** `MCPGEN004`: tool description has fewer than four
+  words or only repeats the tool's name or title. `MCPGEN005`: tool parameters without a description.
 
 ### Changed
 
 - README rewritten for clarity, with an FAQ and a comparison page; added `llms.txt` and
   `llms-full.txt`. Corrected the earlier claim that tool calls run in-process with no HTTP
-  self-call: generated tools call the app over a loopback HTTP request.
-- NuGet descriptions and tags updated.
+  self-call: generated tools call the app over a loopback HTTP request. Corrected Native-AOT
+  claims: the runtime library passes the trim and AOT analyzers, but generated tools call an
+  invoker overload marked `RequiresUnreferencedCode`/`RequiresDynamicCode`, so full Native-AOT
+  publishing of generated tools is not supported yet. Also documented that parameter defaults
+  are not carried over (every parameter is required in the schema), that `MaxItems` only caps a
+  root JSON array, and what the manifest hash does and does not cover.
+- NuGet descriptions and tags updated (`native-aot` tag removed).
 
 ## [1.4.0] - 2026-06-27
 

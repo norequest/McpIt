@@ -18,7 +18,7 @@
 McpIt is a .NET library (a Roslyn source generator plus a small runtime) that turns the ASP.NET Core endpoints you already have into [Model Context Protocol](https://modelcontextprotocol.io) (MCP) tools that Claude, ChatGPT, GitHub Copilot, Cursor and other MCP clients can call.
 
 - **Input:** controller actions and minimal-API handlers marked `[McpTool]`.
-- **Output:** at compile time, one `[McpServerTool]` class per endpoint, built on Microsoft's official [`ModelContextProtocol.AspNetCore`](https://www.nuget.org/packages/ModelContextProtocol.AspNetCore) C# SDK, served at `/mcp` from the same app.
+- **Output:** at compile time, one static class marked `[McpServerToolType]` per endpoint, containing a `[McpServerTool]` method, built on Microsoft's official [`ModelContextProtocol.AspNetCore`](https://www.nuget.org/packages/ModelContextProtocol.AspNetCore) C# SDK, served at `/mcp` from the same app.
 - **No hand-written tool classes, no OpenAPI document, no separate server process.** Tool names, input schemas, descriptions and safety hints come from the code you already wrote: HTTP verb, route, parameters, DataAnnotations and XML doc comments.
 - **Targets .NET 8, 9 and 10.** MIT licensed.
 
@@ -96,13 +96,20 @@ To an MCP client, a `tools/list` call now returns the tool:
   "tools": [
     {
       "name": "getOrder",
+      "title": "Get Order",
       "description": "Gets an order by its id.",
       "inputSchema": {
         "type": "object",
         "properties": { "id": { "type": "integer" } },
         "required": ["id"]
       },
-      "annotations": { "readOnlyHint": true, "idempotentHint": true }
+      "annotations": {
+        "title": "Get Order",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
     }
   ]
 }
@@ -110,7 +117,7 @@ To an MCP client, a `tools/list` call now returns the tool:
 
 When the agent calls `getOrder`, the generated tool sends a loopback HTTP request to your own app (through a typed `HttpClient` registered by `AddMcpEndpoints`). Your real `GetOrder` action handles it, so routing, model binding, filters, validation, middleware and business logic all run exactly as they do for any other HTTP caller. The response body is returned to the agent, optionally shaped first with `[McpToolOutput]`.
 
-Tool discovery is done by the source generator, not by scanning your controllers with reflection at runtime. The generated read (GET/HEAD) path uses reflection-free JSON; see [AOT-ready body serialization](#aot-ready-body-serialization) for the request-body and tool-registration caveats.
+Tool discovery is done by the source generator, not by scanning your controllers with reflection at runtime. For what this means for trimming and Native AOT, see [Native AOT](#native-aot).
 
 ---
 
@@ -138,8 +145,7 @@ How McpIt compares with other ways to expose a .NET API over MCP: [docs/comparis
 2. **Controllers and minimal APIs.** Both endpoint styles can be exposed with `[McpTool]`, including `MapGroup` prefix chains and inline lambdas.
 3. **Your real pipeline runs.** Tool calls go through your actual endpoint, so filters, validation, auth and middleware apply. Credentials can be forwarded, and per-tool OAuth scope gates are built in.
 4. **Token-efficient and safe by default.** `[McpToolOutput]` trims responses before they reach the model, HTTP verbs map to MCP safety hints, destructive endpoints need explicit acknowledgement, and a tool-manifest hash lets CI detect tool drift.
-5. **AOT-friendly.** `McpIt` is marked `IsAotCompatible` (the trim and AOT analyzers gate it on every build) and the generated read path is reflection-free. Tools that take a request body serialize it reflectively unless you supply a `JsonSerializerContext`, and the SDK's `WithToolsFromAssembly()` registration is reflection-based, so use explicit `.WithTools<...>()` registration for a fully AOT-published app.
-6. **Tested.** The test suite covers generation, invocation, output shaping, and the token report.
+5. **Tested.** The test suite covers generation, invocation, output shaping, and the token report.
 
 ---
 
@@ -147,25 +153,25 @@ How McpIt compares with other ways to expose a .NET API over MCP: [docs/comparis
 
 - **Controllers and minimal APIs.** Mark a controller action or a minimal-API handler method with `[McpTool]` to opt it in. For minimal APIs, put `[McpTool]` on a named handler method or directly on an inline lambda and register it with `MapGet`/`MapPost`/etc.; `MapGroup` prefix chaining is supported. Exposure is opt-in: only annotated endpoints become tools. See [Minimal-API support](#minimal-api-support).
 - **Tool names.** `[McpTool]` derives a camelCase name from the method, or set `Name` explicitly. Placed on a controller class, `[McpTool]` sets defaults (such as `NamePrefix`) for that class's annotated actions without exposing anything on its own.
-- **Output shaping with `[McpToolOutput]`.** Keep responses lean. `Fields` projects the response to the JSON properties you list: top-level names, dot paths (`"customer.name"` drills into a nested object), and array markers (`"lines[].sku"` projects each array element down to that sub-property). `MaxItems` caps array elements. `MaxLength` truncates the final result. Shaping order: project, cap, truncate. Malformed JSON passes through untouched.
+- **Output shaping with `[McpToolOutput]`.** Keep responses lean. `Fields` projects the response to the JSON properties you list: top-level names, dot paths (`"customer.name"` drills into a nested object), and array markers (`"lines[].sku"` projects each array element down to that sub-property). `MaxItems` keeps the first N elements when the response root is a JSON array. `MaxLength` truncates the final result. Shaping order: project, cap, truncate. Malformed JSON passes through untouched.
 
   ```csharp
   [HttpGet("{id}/lines")]
   [McpTool(Name = "getOrderLines", Title = "Order Lines")]
-  [McpToolOutput(Fields = new[] { "id", "customer.name", "lines[].sku" }, MaxItems = 20, MaxLength = 2000)]
-  public ActionResult<OrderDetail> GetOrderLines(int id, [FromQuery] int maxLines = 10) { ... }
+  [McpToolOutput(Fields = new[] { "id", "customer.name", "lines[].sku" }, MaxLength = 2000)]
+  public ActionResult<OrderDetail> GetOrderLines(int id) { ... }
   ```
 
 - **Per-tool auth scope gate.** `[McpTool(RequiredScope = "orders:write")]` makes the generated tool verify the caller's OAuth scope before the loopback call. A denied check returns a structured JSON error without invoking the endpoint. See [Per-tool auth scope gate](#per-tool-auth-scope-gate).
-- **Tool-manifest integrity hash.** At compile time, `McpManifestGenerator` emits `McpIt.Generated.McpItManifest` with `AggregateHash`, `Json`, and `ToolNames`. `app.MapMcpManifest(McpIt.Generated.McpItManifest.Json)` serves it at `GET /mcp/manifest`. Snapshot the hash in CI to detect tool-poisoning or drift. See [Tool-manifest integrity hash](#tool-manifest-integrity-hash).
-- **Safety hints from HTTP verbs.** MCP tool annotations are derived from the verb: GET and HEAD are read-only and idempotent; POST, PUT, PATCH, and DELETE are flagged destructive (PUT and DELETE also idempotent). Exposing a destructive operation raises a build warning until you acknowledge it with `[McpTool(AllowDestructive = true)]`.
+- **Tool-manifest integrity hash.** At compile time, `McpManifestGenerator` emits `McpIt.Generated.McpItManifest` with `AggregateHash`, `Json`, and `ToolNames`. `app.MapMcpManifest(McpIt.Generated.McpItManifest.Json)` serves it at `GET /mcp/manifest`. Snapshot the hash in CI to detect drift in tool names, descriptions, verbs, routes and parameter types. See [Tool-manifest integrity hash](#tool-manifest-integrity-hash).
+- **Safety hints from HTTP verbs.** MCP tool annotations are derived from the verb: GET is read-only and idempotent; POST, PUT, PATCH, and DELETE are flagged destructive (PUT and DELETE also idempotent). Exposing a destructive operation raises a build warning until you acknowledge it with `[McpTool(AllowDestructive = true)]`.
 - **MCPGEN diagnostics.** Build-time warnings keep your tool surface honest: `MCPGEN001` when a tool has no description, `MCPGEN002` when a destructive operation is exposed without acknowledgement, `MCPGEN003` when a versioned route token is present but no API version can be resolved.
 - **API versioning.** URL-segment versioning (`Asp.Versioning` and the legacy `Microsoft.AspNetCore.Mvc.Versioning`) works out of the box. No changes to your controllers are required; see the [API versioning](#api-versioning) section below.
-- **Per-parameter descriptions.** XML `<param name="x">...</param>` doc comments on a `[McpTool]` action are emitted as `[Description]` on the generated tool's input parameters and surfaced in the MCP `inputSchema`, so agents see them alongside the type and required/optional flag.
+- **Per-parameter descriptions.** XML `<param name="x">...</param>` doc comments on a `[McpTool]` action are emitted as `[Description]` on the generated tool's input parameters and surfaced in the MCP `inputSchema`, so agents see them alongside the type.
 - **Validation-constraint schema.** DataAnnotations on action or handler parameters (`[Range]`, `[StringLength]`, `[MinLength]`, `[MaxLength]`, `[RegularExpression]`, `[Required]`) are copied onto the generated tool's input parameters. The MCP SDK surfaces them as JSON Schema constraints (`minimum`, `maximum`, `minLength`, `maxLength`, `pattern`). No extra configuration is needed. See [Validation-constraint schema](#validation-constraint-schema).
-- **Tool `Title`.** `[McpTool(Title = "Friendly Name")]` sets the MCP tool `title` field that clients may show in their UI instead of the raw tool name. Without it, McpIt derives a title from the method name.
+- **Tool `Title`.** `[McpTool(Title = "Friendly Name")]` sets the MCP tool `title` field that clients may show in their UI instead of the raw tool name. Without it, McpIt derives a title from the method name (inline-lambda tools get an empty title).
 - **OpenTelemetry spans.** McpIt emits spans from an `ActivitySource` named `"McpIt"` around every loopback call. Wire any OTel exporter with `.AddSource("McpIt")`; no extra packages needed.
-- **AOT-ready body serialization.** Provide a `JsonSerializerContext` via `AddMcpEndpoints(o => o.SerializerOptions = ...)` to make the loopback request-body path reflection-free. Omitting it falls back to reflective serialization.
+- **Source-generated body serialization.** Provide a `JsonSerializerContext` via `AddMcpEndpoints(o => o.SerializerOptions = ...)` to serialize request bodies without reflection at runtime. Omitting it falls back to reflective serialization. See [Native AOT](#native-aot) for what is and is not AOT-safe.
 - **Token-cost report.** The `mcp-token-report` tool measures what your tool list costs the model and can fail a CI build over a budget (see below).
 
 ---
@@ -208,10 +214,9 @@ options.ThrowOnUnsuccessfulResponse = true;   // non-2xx throws McpEndpointInvoc
 public ActionResult<Order> CancelOrder(int id) { ... }
 ```
 
-Scope matching handles two common OAuth/OIDC claim shapes:
+Scope matching reads every claim whose type is literally `scope` or `scp`, splits each value on spaces (so `"read orders:write"` works), and compares each token exactly with the required scope.
 
-- A space-delimited `scope` claim (e.g. `"read orders:write"`): each token is checked individually.
-- Individual `scope` or `scp` claims where the value equals the required scope exactly.
+With JwtBearer, the default inbound claim mapping renames `scp` to a long URI claim type that the gate does not read, so set `options.MapInboundClaims = false`.
 
 When the check fails, the tool returns a JSON error:
 
@@ -282,7 +287,7 @@ McpIt generates tools for minimal-API handlers alongside controller actions. Thr
 - **`MapGroup` prefix chains.** The generator resolves the chain at compile time and combines every prefix with the route segment. Both direct-chain (`app.MapGroup("/api").MapGet(...)`) and variable form (`var g = app.MapGroup("/api"); g.MapGet(...)`) work, including nested groups.
 - **Inline lambdas.** `[McpTool]` placed in the attribute list directly on the lambda expression.
 
-**Inline lambda tool names.** A lambda has no method name, so the tool name is auto-derived as `{verb}_{sanitizedRoute}` (for example, a GET handler on `/ping/{name}` produces tool name `get_ping_name`). Use `[McpTool(Name = "...")]` to set the tool name explicitly and `[McpTool(Title = "...")]` to set the display title.
+**Inline lambda tool names.** A lambda has no method name, so the tool name is auto-derived as `{verb}_{sanitizedRoute}` (for example, a GET handler on `/ping/{name}` produces tool name `get_ping_name`). Use `[McpTool(Name = "...")]` to set the tool name explicitly and `[McpTool(Title = "...")]` to set the display title (without it, a lambda tool's title is empty).
 
 ```csharp
 // Named method-group handler: [McpTool] on the method itself.
@@ -329,18 +334,20 @@ Token counts use an offline heuristic tokenizer (estimates, not exact billing): 
 
 - **Dot path** (`"customer.name"`): drills into a nested object and keeps only that leaf.
 - **Array marker** (`"lines[].sku"`): projects every element of an array down to the named sub-property.
-- **`MaxItems`**: caps how many array elements survive projection before `MaxLength` truncation.
+- **`MaxItems`**: when the response root is a JSON array, keeps only its first N elements. It does not cap arrays nested inside an object (such as `lines` below).
 
-Shaping order: project fields, cap items, truncate length.
+Shaping order: project fields, cap items, truncate length. When the root is an array, `Fields` is applied to each element.
 
 ```csharp
 [HttpGet("{id}/lines")]
 [McpTool(Name = "getOrderLines", Title = "Order Lines")]
-[McpToolOutput(
-    Fields = new[] { "id", "customer.name", "lines[].sku" },
-    MaxItems = 20,
-    MaxLength = 2000)]
-public ActionResult<OrderDetail> GetOrderLines(int id, [FromQuery] int maxLines = 10) { ... }
+[McpToolOutput(Fields = new[] { "id", "customer.name", "lines[].sku" }, MaxLength = 2000)]
+public ActionResult<OrderDetail> GetOrderLines(int id) { ... }
+
+[HttpGet]
+[McpTool(Name = "listOrders")]
+[McpToolOutput(Fields = new[] { "id", "status" }, MaxItems = 20)]   // root is an array
+public IEnumerable<Order> ListOrders() { ... }
 ```
 
 Given a response like `{ "id": 1, "customer": { "name": "Ada", "email": "..." }, "lines": [{ "sku": "A1", "qty": 2 }] }`, the projected output is `{ "id": 1, "customer": { "name": "Ada" }, "lines": [{ "sku": "A1" }] }`. The `email` and `qty` fields never reach the model.
@@ -349,7 +356,7 @@ Given a response like `{ "id": 1, "customer": { "name": "Ada", "email": "..." },
 
 ## Per-parameter descriptions
 
-XML `<param name="...">` doc comments on a `[McpTool]` action are emitted as `[Description]` attributes on the generated tool's input parameters and surfaced in the MCP `inputSchema` description field, so agents see them alongside the type and required/optional flag.
+XML `<param name="...">` doc comments on a `[McpTool]` action are emitted as `[Description]` attributes on the generated tool's input parameters and surfaced in the MCP `inputSchema` description field, so agents see them alongside the type.
 
 ```csharp
 /// <summary>Gets the full detail of a single order by its id.</summary>
@@ -372,11 +379,14 @@ Supported attributes: `[Range]`, `[StringLength]`, `[MinLength]`, `[MaxLength]`,
 As a belt-and-suspenders measure McpIt also appends a concise human-readable hint to the parameter's `[Description]` (for example, `(range: 1 to 100)`) so agents that read descriptions directly also see the constraint.
 
 ```csharp
-[HttpGet("products")]
-[McpTool(Name = "listProducts", Title = "List Products")]
-public ActionResult<Product[]> ListProducts(
-    [Range(1, 100)] int pageSize = 20,
-    [StringLength(50)] string? q = null)
+/// <summary>Searches orders by optional name filter with pagination.</summary>
+/// <param name="pageSize">Results per page, 1 to 100.</param>
+/// <param name="q">Optional customer name filter, up to 50 chars.</param>
+[HttpGet("search")]
+[McpTool(Name = "searchOrders")]
+public IEnumerable<string> SearchOrders(
+    [FromQuery][Range(1, 100)] int pageSize,
+    [FromQuery][StringLength(50)] string? q)
 { ... }
 ```
 
@@ -387,12 +397,15 @@ The model receives:
   "inputSchema": {
     "type": "object",
     "properties": {
-      "pageSize": { "type": "integer", "minimum": 1, "maximum": 100 },
-      "q":        { "type": "string",  "maxLength": 50 }
-    }
+      "pageSize": { "description": "Results per page, 1 to 100. (range: 1 to 100)", "type": "integer", "minimum": 1, "maximum": 100 },
+      "q": { "description": "Optional customer name filter, up to 50 chars. (max length: 50)", "type": ["string", "null"], "maxLength": 50 }
+    },
+    "required": ["pageSize", "q"]
   }
 }
 ```
+
+**Limitation:** parameter default values are not carried into the generated tool, so every parameter is listed in `required`. A nullable parameter is typed `["string", "null"]`, so the agent can pass `null` to leave it out.
 
 Attribute-to-schema mapping:
 
@@ -401,13 +414,13 @@ Attribute-to-schema mapping:
 - `[MinLength(n)]`: `minLength`.
 - `[MaxLength(n)]`: `maxLength`.
 - `[RegularExpression(pattern)]`: `pattern`.
-- `[Required]`: marks the parameter as required in the schema.
+- `[Required]`: appends `(required)` to the description (every parameter is already in `required`).
 
 ---
 
 ## Tool Title
 
-`[McpTool(Title = "Friendly Name")]` sets the MCP tool `title` field that clients may display in their UI instead of the raw tool name. Without a `Title`, McpIt derives one from the method name in title case. All generated tools emit `openWorld: false`.
+`[McpTool(Title = "Friendly Name")]` sets the MCP tool `title` field that clients may display in their UI instead of the raw tool name. Without a `Title`, McpIt derives one from the method name in title case; inline-lambda tools get an empty title unless you set one. All generated tools emit `openWorldHint: false`.
 
 ```csharp
 [McpTool(Name = "getOrder", Title = "Get Order by ID")]
@@ -432,9 +445,14 @@ No McpIt-specific packages are required. The `ActivitySource` is always present 
 
 ---
 
-## AOT-ready body serialization
+## Native AOT
 
-By default, when a generated tool needs to POST a `[FromBody]` payload to an endpoint, McpIt serializes it with reflective `System.Text.Json`. For Native-AOT or fully trimmed apps, supply a `JsonSerializerContext` via `SerializerOptions`:
+The `McpIt` runtime library builds with `IsAotCompatible` and with trim and AOT analyzer warnings treated as errors. Full Native-AOT publishing of an app that uses generated tools is **not supported yet**:
+
+- Every generated tool, GET included, calls `IMcpEndpointInvoker.InvokeAsync(..., object? body, Type? bodyType, ...)`, which is annotated `[RequiresUnreferencedCode]` and `[RequiresDynamicCode]`. Trim or AOT analysis of your app therefore reports IL2026/IL3050 for generated tools.
+- `AddControllers()` (MVC) is not AOT-compatible, and the SDK's `WithToolsFromAssembly()` discovers tools with reflection.
+
+What you can do today is keep request-body serialization off the reflection path. By default, when a generated tool sends a `[FromBody]` payload, McpIt serializes it with reflective `System.Text.Json`. Supply a `JsonSerializerContext` via `SerializerOptions` instead:
 
 ```csharp
 // In Program.cs:
@@ -451,17 +469,17 @@ builder.Services.AddMcpEndpoints(o =>
 internal partial class SampleJsonContext : JsonSerializerContext { }
 ```
 
-When `SerializerOptions` is set, the loopback request-body path calls `GetTypeInfo(bodyType)` instead of `JsonSerializer.Serialize` with reflection, making it Native-AOT and trim safe. Omitting `SerializerOptions` falls back to reflective serialization with no other changes required (zero-config default).
+When `SerializerOptions` is set, the loopback request-body path calls `GetTypeInfo(bodyType)` instead of reflective `JsonSerializer.Serialize`. Omitting `SerializerOptions` falls back to reflective serialization (the zero-config default).
 
 ---
 
 ## Tool-manifest integrity hash
 
-At compile time, `McpManifestGenerator` emits a class `McpIt.Generated.McpItManifest` with three constant members:
+At compile time, `McpManifestGenerator` emits a class `McpIt.Generated.McpItManifest` with three members:
 
-- `AggregateHash`: SHA-256 fingerprint computed over all tool names, descriptions, and parameter surfaces, sorted for stability.
-- `Json`: the full manifest as a compile-time JSON string: `{"aggregateHash":"...","tools":[{"name":"...","verb":"GET","route":"orders/{id}","hash":"...","parameterCount":N}]}`.
-- `ToolNames`: alphabetically sorted `string[]` of every tool name in the assembly.
+- `AggregateHash` (`const string`): SHA-256 fingerprint over every manifest tool's name, description, verb, route and parameter names and types, sorted by name for stability.
+- `Json` (`const string`): the full manifest as a compile-time JSON string: `{"aggregateHash":"...","tools":[{"name":"...","verb":"GET","route":"orders/{id}","hash":"...","parameterCount":N}]}`.
+- `ToolNames` (`static readonly string[]`): alphabetically sorted names of the tools in the manifest (controller actions and named minimal-API handler methods; inline-lambda tools are not included).
 
 Serve the manifest at runtime with one call in `Program.cs`:
 
@@ -473,11 +491,15 @@ app.MapMcpManifest(McpIt.Generated.McpItManifest.Json);
 app.MapMcpManifest(McpIt.Generated.McpItManifest.Json, "/api/tool-manifest");
 ```
 
-`MapMcpManifest` maps a GET endpoint that writes the constant string directly with no runtime serialization (AOT-clean). The method is an extension on `IEndpointRouteBuilder` from the `McpIt` namespace.
+`MapMcpManifest` maps a GET endpoint that writes the constant string directly with no runtime serialization. The method is an extension on `IEndpointRouteBuilder` from the `McpIt` namespace.
 
-**Use case: CI drift detection.** Store `McpIt.Generated.McpItManifest.AggregateHash` as a reference value in your CI pipeline. On each deploy, fetch `GET /mcp/manifest` and compare `aggregateHash`. A mismatch means a tool was added, removed, renamed, or its parameter surface changed since the reference was captured. MCP clients can perform the same check to detect tool-poisoning between sessions.
+**Use case: CI drift detection.** Store `McpIt.Generated.McpItManifest.AggregateHash` as a reference value in your CI pipeline. On each deploy, fetch `GET /mcp/manifest` and compare `aggregateHash`. A mismatch means a manifest tool was added, removed or renamed, or its description, verb, route or parameter names and types changed since the reference was captured.
 
-**Fingerprint scope.** The hash covers tool name (with class-level `NamePrefix` and API-version suffix applied, matching the names the MCP client sees), description, HTTP verb, combined route (class `[Route]` plus method verb-route argument), and parameter surface (names and types). Changing a controller route or HTTP verb now changes `AggregateHash`. Remaining limitation: minimal-API handler methods receive empty verb and route in the manifest because those values come from the `MapGet`/`MapPost`/etc. call syntax rather than from attributes, and are not visible to the attribute-driven pipeline at compile time. Keep that scope in mind when interpreting hash changes.
+**Fingerprint scope.** Covered: tool name (with class-level `NamePrefix` and API-version suffix applied), tool description, HTTP verb, combined route (class `[Route]` plus the method's verb-route argument), and each parameter's name and type. Not covered: parameter descriptions, `Title`, safety annotations, `RequiredScope`, validation constraints and output shaping, so the hash is a drift check, not a complete defense against tool poisoning. Other limits:
+
+- Inline-lambda tools are left out of the manifest entirely.
+- Named minimal-API handler methods get an empty verb and route, because those come from the `MapGet`/`MapPost` call rather than from attributes.
+- API-versioned routes are stored as the raw template (for example `v{version:apiVersion}/account/info`), not the resolved path.
 
 ---
 
@@ -501,7 +523,7 @@ public ActionResult<Order> CreateOrder(CreateOrderRequest request) { ... }
 
 `Category` on a controller class acts as a default for its actions. `Keywords` are synonyms the agent might use. `Priority` breaks ties when several tools match equally well (negative values demote a tool).
 
-**Generated catalog.** The generator emits `McpIt.Generated.McpItToolCatalog.Tools`, a build-time list describing every `[McpTool]` endpoint (name, title, description, verb, route, category, keywords, priority, parameters, read-only and destructive flags). No reflection is involved.
+**Generated catalog.** The generator emits `McpIt.Generated.McpItToolCatalog.Tools`, a build-time list describing every `[McpTool]` endpoint (name, title, description, verb, route, category, keywords, priority, parameters, read-only and destructive flags). No reflection is involved. The class is `internal` and emitted once per assembly that has tools, so the snippets below work when the `[McpTool]` endpoints are in the same project as `Program.cs`. For tools in a class library, expose the list from that library (for example `public static IReadOnlyList<McpToolDescriptor> McpTools => McpItToolCatalog.Tools;`) and pass that in.
 
 **`search_tools` meta-tool.** Register it on the MCP server builder and agents can ask for the tools relevant to a task instead of reading the whole list. Ranking is offline (BM25 over the catalog), so there are no model or network calls:
 
@@ -532,9 +554,9 @@ app.MapMcpDiscovery(McpItToolCatalog.Tools, o =>
 | `/mcp/server-card` | MCP Server Card (`application/mcp-server-card+json`), following the draft SEP-2127 shape |
 | `/.well-known/ai-catalog.json` | Domain-level pointer to the server card |
 
-The Server Card spec is still a draft, so its shape may change. Absolute URLs come only from `PublicBaseUrl`, never from the client-controlled `Host` header. The call returns a route group, so `.RequireAuthorization()` protects all three documents.
+`ServerName` is required while the Server Card is enabled (the default); without it, `MapMcpDiscovery` throws at startup. The Server Card spec is still a draft, so its shape may change. Absolute URLs come only from `PublicBaseUrl`, never from the client-controlled `Host` header. The call returns a route group, so `.RequireAuthorization()` protects all three documents.
 
-**Description-quality diagnostics.** Two new Info-level build diagnostics nudge you toward descriptions agents can act on: `MCPGEN004` when a tool description is too short, and `MCPGEN005` when a tool parameter has no description.
+**Description-quality diagnostics.** Two new Info-level build diagnostics nudge you toward descriptions agents can act on: `MCPGEN004` when a tool description has fewer than four words or only repeats the tool's name or title, and `MCPGEN005` when a tool parameter has no description.
 
 
 ---
@@ -545,42 +567,21 @@ The Server Card spec is still a draft, so its shape may change. Absolute URLs co
 Install `McpIt`, add `AddMcpServer().WithHttpTransport().WithToolsFromAssembly()`, `AddMcpEndpoints()` and `app.MapMcp("/mcp")` to `Program.cs`, then put `[McpTool]` on each controller action or minimal-API handler you want agents to call. See the [30-second example](#30-second-example).
 
 **Is McpIt an MCP server?**
-No. McpIt is a library. Your ASP.NET Core app becomes the MCP server, using the official `ModelContextProtocol.AspNetCore` SDK for the protocol and transport. McpIt generates the tool classes that server exposes.
-
-**Do I still need the official ModelContextProtocol C# SDK?**
-Yes, and you already have it: `McpIt` depends on `ModelContextProtocol.AspNetCore` and brings it in transitively. You can still write hand-made `[McpServerTool]` classes, prompts and resources with the SDK in the same app.
+No. McpIt is a library. Your ASP.NET Core app becomes the MCP server, using the official `ModelContextProtocol.AspNetCore` SDK (a transitive dependency) for the protocol and transport. McpIt generates the tool classes that server exposes.
 
 **Does McpIt need an OpenAPI / Swagger document?**
-No. It reads your C# code at compile time (attributes, routes, parameters, DataAnnotations, XML doc comments). Swagger can stay or go; it is unrelated.
-
-**Does it work with minimal APIs?**
-Yes. Named method-group handlers, `MapGroup` prefix chains (including nested groups) and inline lambdas are supported. See [Minimal-API support](#minimal-api-support).
+No. It reads your C# code at compile time (attributes, routes, parameters, DataAnnotations, XML doc comments).
 
 **Are all my endpoints exposed?**
 No. Exposure is opt-in: only endpoints marked `[McpTool]` become tools. POST, PUT, PATCH and DELETE endpoints raise build warning `MCPGEN002` until you acknowledge them with `AllowDestructive = true`.
 
-**How does a tool call reach my controller?**
-The generated tool makes a loopback HTTP request to your own app through a typed `HttpClient`, so your routing, model binding, filters, validation and middleware all run. See [How it works](#how-it-works).
-
-**My endpoints require authentication. Does that work?**
-Yes. Set `ForwardAuthorization = true` (and optionally `ForwardedHeaders`) together with a pinned `BaseAddress` in `AddMcpEndpoints`, and the MCP caller's credentials are forwarded to the endpoint. `[McpTool(RequiredScope = "...")]` adds a per-tool OAuth scope check. See [Authentication](#authentication).
-
-**How do I keep tool responses small so they don't waste the model's context?**
-Use `[McpToolOutput(Fields = ..., MaxItems = ..., MaxLength = ...)]` to project, cap and truncate responses, and the `mcp-token-report` tool to measure and budget the token cost of your `tools/list`.
-
 **Does it support Native AOT?**
-The `McpIt` runtime is marked `IsAotCompatible` and the read path is reflection-free. For a fully AOT-published app, supply a `JsonSerializerContext` for request bodies and register tools explicitly with `.WithTools<...>()` instead of `WithToolsFromAssembly()`. See [AOT-ready body serialization](#aot-ready-body-serialization).
+Not fully yet. The runtime library passes the trim and AOT analyzers, but generated tools call an invoker overload marked `[RequiresUnreferencedCode]`/`[RequiresDynamicCode]`, and MVC itself is not AOT-compatible. See [Native AOT](#native-aot).
 
-**Which .NET versions are supported?**
-.NET 8, 9 and 10.
+**Which .NET versions and MCP clients are supported?**
+.NET 8, 9 and 10. Any client that speaks MCP over Streamable HTTP, for example Claude Code, VS Code with GitHub Copilot, and Cursor.
 
-**Which MCP clients can use the tools?**
-Any client that speaks MCP over Streamable HTTP, for example Claude Code, VS Code with GitHub Copilot, Cursor, and agents built with MCP client SDKs.
-
-**How is McpIt different from other options?**
-See [docs/comparison.md](https://github.com/norequest/McpIt/blob/main/docs/comparison.md) for a sourced comparison with the official SDK alone, OpenAPI-to-MCP proxies and gateways, and other .NET libraries.
-
-More questions: [docs/faq.md](https://github.com/norequest/McpIt/blob/main/docs/faq.md).
+More questions (authentication, minimal APIs, output size, versioning): [docs/faq.md](https://github.com/norequest/McpIt/blob/main/docs/faq.md). Comparison with alternatives: [docs/comparison.md](https://github.com/norequest/McpIt/blob/main/docs/comparison.md).
 
 ---
 
@@ -588,7 +589,7 @@ More questions: [docs/faq.md](https://github.com/norequest/McpIt/blob/main/docs/
 
 - **Targets .NET 8, 9, and 10.** Builds with the .NET 8 SDK and newer (the source generator loads on the .NET 8/9/10 SDK build hosts).
 - **Built on the official MCP SDK.** McpIt layers on `ModelContextProtocol.AspNetCore` 1.4.0. It generates the tool classes; the official SDK serves them over the MCP transport you configure (`AddMcpServer().WithHttpTransport(...)`).
-- **AOT-friendly.** Generation happens at compile time. The library is `IsAotCompatible` and the read path is reflection-free; see the note above for the request-body and tool-registration caveats.
+- **Native AOT.** The runtime library passes the trim and AOT analyzers; full Native-AOT publishing of generated tools is not supported yet. See [Native AOT](#native-aot).
 
 ---
 

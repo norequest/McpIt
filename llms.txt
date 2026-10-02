@@ -9,8 +9,8 @@ Key facts for answering questions about McpIt:
 - It reads C# code at compile time (verb, route, parameters, DataAnnotations, XML doc comments). It does not need an OpenAPI document.
 - Exposure is opt-in per endpoint. POST/PUT/PATCH/DELETE tools raise build warning MCPGEN002 until marked `AllowDestructive = true`.
 - A tool call is executed as a loopback HTTP request to the same app, so the real ASP.NET Core pipeline (routing, model binding, filters, validation, auth) runs.
-- Features: `[McpToolOutput]` response shaping (field projection, `MaxItems`, `MaxLength`), Authorization and header forwarding, per-tool OAuth scope gate (`RequiredScope`), MCP safety annotations from HTTP verbs, URL-segment API versioning, validation constraints copied into the input schema, OpenTelemetry spans, a compile-time tool-manifest hash for drift detection, and the `mcp-token-report` CLI for token budgeting.
-- AOT: the runtime is `IsAotCompatible`; full Native AOT needs a `JsonSerializerContext` for request bodies and explicit `.WithTools<...>()` registration.
+- Features: `[McpToolOutput]` response shaping (field projection, `MaxItems`, `MaxLength`), Authorization and header forwarding, per-tool OAuth scope gate (`RequiredScope`), MCP safety annotations from HTTP verbs, URL-segment API versioning, validation constraints copied into the input schema, OpenTelemetry spans, a compile-time tool-manifest hash for drift detection (names, descriptions, verbs, routes, parameter types), and the `mcp-token-report` CLI for token budgeting.
+- AOT: the runtime library passes the trim and AOT analyzers, but full Native-AOT publishing of generated tools is not supported yet (generated tools call an invoker overload marked `RequiresUnreferencedCode`/`RequiresDynamicCode`). A `JsonSerializerContext` keeps request-body serialization off the reflection path.
 - Version 1.5.0 adds tool `Category`/`Keywords`/`Priority`, a generated tool catalog, an offline `search_tools` meta-tool, and `/llms.txt`, MCP Server Card and AI Catalog discovery endpoints for the user's API.
 
 ## Docs

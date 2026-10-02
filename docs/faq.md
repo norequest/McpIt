@@ -109,7 +109,7 @@ It is already there: `McpIt` depends on `ModelContextProtocol.AspNetCore` (1.4.0
 
 ### What exactly does the source generator produce?
 
-For each `[McpTool]` endpoint, a class marked `[McpServerToolType]` with a method marked `[McpServerTool(Name, Title, ReadOnly, Destructive, Idempotent, OpenWorld = false)]`. Its parameters mirror the endpoint's route, query and body parameters, with `[Description]` and DataAnnotations copied over. It also emits `McpIt.Generated.McpItManifest` (tool names, a JSON manifest and an aggregate SHA-256 hash).
+For each `[McpTool]` endpoint, a static class marked `[McpServerToolType]` with a method marked `[McpServerTool(Name, Title, ReadOnly, Destructive, Idempotent, OpenWorld = false)]`. Its parameters mirror the endpoint's route, query and body parameters, with `[Description]` and DataAnnotations copied over. Parameter default values are not carried over, so every parameter is listed as required in the input schema (nullable types accept `null`). It also emits `McpIt.Generated.McpItManifest` (tool names, a JSON manifest and an aggregate SHA-256 hash) and, from 1.5.0, `McpIt.Generated.McpItToolCatalog` (an `internal` build-time list of tool descriptors).
 
 ### Does McpIt need an OpenAPI or Swagger document?
 
@@ -117,7 +117,7 @@ No. It reads your C# source at compile time. It does not read, generate or depen
 
 ### Does McpIt use runtime reflection?
 
-Tool discovery is done at compile time by the generator, not by scanning controllers at runtime. The runtime and the generated read (GET/HEAD) path use reflection-free JSON. Two caveats: request bodies are serialized reflectively unless you supply a `JsonSerializerContext`, and the SDK's `WithToolsFromAssembly()` registration uses reflection. See [Does it support Native AOT?](#does-mcpit-support-native-aot).
+Tool discovery is done at compile time by the generator, not by scanning controllers at runtime. At run time, request bodies are serialized reflectively unless you supply a `JsonSerializerContext`, and the SDK's `WithToolsFromAssembly()` registration uses reflection. See [Does McpIt support Native AOT?](#does-mcpit-support-native-aot).
 
 ### How does a tool call reach my endpoint?
 
@@ -133,7 +133,7 @@ No. Only endpoints marked `[McpTool]` become tools.
 
 ### How do I avoid exposing a destructive endpoint by accident?
 
-POST, PUT, PATCH and DELETE endpoints are marked destructive in the MCP tool annotations, and the build emits warning `MCPGEN002` until you acknowledge the endpoint with `[McpTool(AllowDestructive = true)]`. GET and HEAD are marked read-only and idempotent.
+POST, PUT, PATCH and DELETE endpoints are marked destructive in the MCP tool annotations, and the build emits warning `MCPGEN002` until you acknowledge the endpoint with `[McpTool(AllowDestructive = true)]`. GET is marked read-only and idempotent.
 
 ### My API requires a Bearer token or an API key. How do agents authenticate?
 
@@ -153,11 +153,13 @@ Forwarding without a pinned `BaseAddress` throws at startup, because an auto-det
 
 ### Can I require an OAuth scope per tool?
 
-Yes: `[McpTool(RequiredScope = "orders:write")]`. The generated tool checks the caller's `scope` / `scp` claims before calling the endpoint and returns `{"error":"forbidden","tool":"...","requiredScope":"..."}` when the scope is missing.
+Yes: `[McpTool(RequiredScope = "orders:write")]`. Before calling the endpoint, the generated tool reads every claim whose type is literally `scope` or `scp`, splits each value on spaces, and looks for an exact match. When the scope is missing it returns `{"error":"forbidden","tool":"...","requiredScope":"..."}`.
+
+With JwtBearer, the default inbound claim mapping renames `scp` to a long URI claim type the gate does not read, so set `options.MapInboundClaims = false`.
 
 ### How do I detect that the tool surface changed between deploys?
 
-Serve the generated manifest with `app.MapMcpManifest(McpIt.Generated.McpItManifest.Json)` (default `GET /mcp/manifest`) and compare `aggregateHash` against a value stored in CI. The hash covers tool names, descriptions, verbs, routes and parameter surfaces. Minimal-API handlers currently contribute an empty verb and route.
+Serve the generated manifest with `app.MapMcpManifest(McpIt.Generated.McpItManifest.Json)` (default `GET /mcp/manifest`) and compare `aggregateHash` against a value stored in CI. The hash covers each tool's name, description, verb, route and parameter names and types. It does not cover parameter descriptions, `Title`, annotations, `RequiredScope`, validation constraints or output shaping, so treat it as a drift check rather than full tool-poisoning protection. Inline-lambda tools are left out of the manifest, named minimal-API handlers contribute an empty verb and route, and API-versioned routes are stored as the raw template.
 
 ---
 
@@ -169,7 +171,7 @@ Serve the generated manifest with `app.MapMcpManifest(McpIt.Generated.McpItManif
 [McpToolOutput(Fields = new[] { "id", "customer.name", "lines[].sku" }, MaxItems = 20, MaxLength = 2000)]
 ```
 
-`Fields` projects the JSON response (top-level names, dot paths, `[]` array markers), `MaxItems` caps arrays, `MaxLength` truncates the result. Malformed JSON passes through untouched.
+`Fields` projects the JSON response (top-level names, dot paths, `[]` array markers), `MaxItems` keeps the first N elements when the response root is a JSON array (nested arrays are not capped), `MaxLength` truncates the result. Malformed JSON passes through untouched.
 
 ### How do I measure how many tokens my tool definitions cost?
 
@@ -190,10 +192,9 @@ It reads any MCP server (or a saved `tools/list` JSON), prints per-tool and tota
 
 ### Does McpIt support Native AOT?
 
-The `McpIt` runtime is marked `IsAotCompatible`, with the trim and AOT analyzers enforced on every build, and the repository includes an AOT publish smoke test (`benchmarks/aot-publish-smoke.sh`). For a fully AOT-published app:
+Not fully yet. The `McpIt` runtime library is marked `IsAotCompatible` and builds with trim and AOT analyzer warnings treated as errors. But every generated tool (GET included) calls `IMcpEndpointInvoker.InvokeAsync(..., object?, Type?, ...)`, which is annotated `[RequiresUnreferencedCode]`/`[RequiresDynamicCode]`, so your app gets IL2026/IL3050 warnings under trim or AOT analysis. `AddControllers()` (MVC) is not AOT-compatible either.
 
-- supply a source-generated `JsonSerializerContext` through `AddMcpEndpoints(o => o.SerializerOptions = ...)` so request bodies serialize without reflection, and
-- register tools explicitly with `.WithTools<...>()` instead of `WithToolsFromAssembly()`.
+What helps today: supply a source-generated `JsonSerializerContext` through `AddMcpEndpoints(o => o.SerializerOptions = ...)` so request bodies are serialized without reflection at runtime. The repository also has a manual AOT publish script (`benchmarks/aot-publish-smoke.sh`); it is not run by CI.
 
 ### Does it work with API versioning?
 
@@ -214,7 +215,18 @@ Yes. McpIt emits OpenTelemetry spans named `mcpit.endpoint.invoke` from the `Act
 
 ### How do I help an agent pick the right tool when I expose many endpoints?
 
-McpIt 1.5.0 adds `Category`, `Keywords` and `Priority` to `[McpTool]`, a generated catalog `McpIt.Generated.McpItToolCatalog.Tools`, an offline BM25 `search_tools` meta-tool registered with `.WithToolSearch(McpItToolCatalog.Tools)`, and `app.MapMcpDiscovery(McpItToolCatalog.Tools)`, which serves `/llms.txt`, an MCP Server Card at `/mcp/server-card` and `/.well-known/ai-catalog.json`. Info diagnostics `MCPGEN004` (description too short) and `MCPGEN005` (parameter without description) flag weak descriptions. See the README section "Help agents find the right tool (1.5.0)".
+McpIt 1.5.0 adds `Category`, `Keywords` and `Priority` to `[McpTool]`, a generated catalog `McpIt.Generated.McpItToolCatalog.Tools`, an offline BM25 `search_tools` meta-tool, and discovery documents (`/llms.txt`, an MCP Server Card at `/mcp/server-card` and `/.well-known/ai-catalog.json`):
+
+```csharp
+builder.Services.AddMcpServer()
+    .WithHttpTransport(o => o.Stateless = true)
+    .WithToolsFromAssembly()
+    .WithToolSearch(McpItToolCatalog.Tools);
+
+app.MapMcpDiscovery(McpItToolCatalog.Tools, o => o.ServerName = "com.example/orders");   // ServerName is required
+```
+
+`McpItToolCatalog` is `internal`, one per assembly with tools, so this works when the `[McpTool]` endpoints are in the same project as `Program.cs`; for tools in a class library, expose `McpItToolCatalog.Tools` from that library through a public static property and pass that in. Info diagnostics `MCPGEN004` (description has fewer than four words or only repeats the tool's name or title) and `MCPGEN005` (parameter without description) flag weak descriptions. See the README section "Help agents find the right tool (1.5.0)".
 
 
 ---

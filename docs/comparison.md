@@ -31,7 +31,7 @@ The SDK ([`ModelContextProtocol`](https://www.nuget.org/packages/ModelContextPro
 - No OpenAPI document and no runtime scanning of controllers.
 - Opt-in per endpoint.
 - Extras: response shaping (`[McpToolOutput]`), Authorization and header forwarding, per-tool OAuth scope gate, verb-derived MCP safety annotations, validation constraints in the input schema, OpenTelemetry spans, a compile-time tool-manifest hash, and an offline token-cost CLI.
-- Limits: tools only (use the SDK directly for prompts and resources); minimal-API handlers currently contribute an empty verb and route to the manifest hash; full Native AOT needs a `JsonSerializerContext` for request bodies and explicit `.WithTools<...>()` registration.
+- Limits: tools only (use the SDK directly for prompts and resources); parameter defaults are not carried over, so every parameter is required in the schema; the manifest hash leaves out inline-lambda tools and gives named minimal-API handlers an empty verb and route; full Native-AOT publishing of generated tools is not supported yet.
 
 ### 3. Runtime libraries that expose existing endpoints
 

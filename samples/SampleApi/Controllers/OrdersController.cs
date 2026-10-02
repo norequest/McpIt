@@ -60,7 +60,7 @@ public class OrdersController : ControllerBase
     /// <param name="id">The numeric order id to look up.</param>
     // PER-PARAMETER DESCRIPTIONS. The XML <param> tag above is emitted as a [Description]
     // attribute on the generated tool's "id" input parameter and surfaced in the MCP
-    // inputSchema, so agents see it alongside the type and required/optional flag.
+    // inputSchema, so agents see it alongside the type.
     // TITLE. [McpTool(Title = "...")] sets the human-readable display name MCP clients may
     // show in their UI. Without Title, McpIt derives one from the method name in title case.
     [HttpGet("{id}")]
@@ -122,11 +122,13 @@ public class OrdersController : ControllerBase
 
     /// <summary>Returns projected line-item SKUs and the customer name for an order.</summary>
     /// <param name="id">The numeric order id to look up.</param>
-    /// <param name="maxLines">Maximum number of line items to include, 1-50. Omit for the default of 10.</param>
+    /// <param name="maxLines">Maximum number of line items to include, 1-50. Pass null for the default of 10.</param>
     // NESTED/ARRAY PROJECTION. Fields accepts dot paths ("customer.name" drills into a nested
     // object) and array markers ("lines[].sku" projects each element of the array down to that
-    // sub-property). MaxItems caps the number of array elements before MaxLength truncation.
-    // Shaping order: project fields, cap items, truncate length.
+    // sub-property). MaxItems only caps a response whose ROOT is a JSON array, so it has no
+    // effect here (this action returns an object). Shaping order: project, cap, truncate.
+    // Parameter defaults are not carried into the tool: maxLines is still listed as required
+    // in the schema, typed integer-or-null.
     //
     // This action also demonstrates all three 1.4.0 annotation features together:
     //   1. Nested/array Fields + MaxItems on [McpToolOutput]
