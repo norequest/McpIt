@@ -58,4 +58,25 @@ public sealed class McpToolAttribute : Attribute
     /// individual <c>scp</c> or <c>scope</c> claims. Works for both controller and minimal-API tools.
     /// </summary>
     public string? RequiredScope { get; set; }
+
+    /// <summary>
+    /// Optional category used to group related tools for discovery and ranking
+    /// (for example "orders" or "billing"). On a controller <b>class</b> this acts as a
+    /// default for every action tool in that class; an action-level value wins.
+    /// </summary>
+    public string? Category { get; set; }
+
+    /// <summary>
+    /// Optional search keywords and synonyms that help an AI agent find this tool when its
+    /// wording differs from the tool's name and description (for example
+    /// <c>new[] { "purchase", "checkout" }</c> on a <c>createOrder</c> tool). Used by the
+    /// generated tool catalog, <c>search_tools</c> ranking and discovery documents.
+    /// </summary>
+    public string[]? Keywords { get; set; }
+
+    /// <summary>
+    /// Optional ranking boost. Higher values rank the tool earlier when several tools match a
+    /// query equally well. Defaults to <c>0</c>; negative values demote a tool.
+    /// </summary>
+    public int Priority { get; set; }
 }
