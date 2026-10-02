@@ -75,7 +75,7 @@ public class ToolCatalogTests
         AssertCompiles(result);
         var catalog = Catalog(result);
 
-        Assert.Contains("public static class McpItToolCatalog", catalog);
+        Assert.Contains("internal static class McpItToolCatalog", catalog);
         Assert.Contains(
             "public static global::System.Collections.Generic.IReadOnlyList<global::McpIt.McpToolDescriptor> Tools { get; } = new global::McpIt.McpToolDescriptor[]",
             catalog);

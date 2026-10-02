@@ -35,7 +35,7 @@ internal static class CatalogEmitter
             /// Build-time catalog of every [McpTool] in this assembly (controller actions and
             /// minimal-API handlers), used by McpIt for tool ranking, search and discovery documents.
             /// </summary>
-            public static class McpItToolCatalog
+            internal static class McpItToolCatalog
             {
                 /// <summary>All generated MCP tools, sorted by tool name (ordinal).</summary>
                 public static global::System.Collections.Generic.IReadOnlyList<global::McpIt.McpToolDescriptor> Tools { get; } = new global::McpIt.McpToolDescriptor[]
