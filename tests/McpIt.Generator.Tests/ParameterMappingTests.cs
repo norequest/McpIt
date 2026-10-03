@@ -97,4 +97,32 @@ public class ParameterMappingTests
         Assert.Contains("param request -> ParameterSource.Body", result.AllGeneratedSource);
         Assert.DoesNotContain("param cancellationToken ->", result.AllGeneratedSource);
     }
+
+    [Fact]
+    public void Description_attribute_on_parameter_flows_into_generated_tool()
+    {
+        var src = Wrap("""
+            /// <summary>x</summary>
+            [HttpGet("{id}")]
+            [McpTool]
+            public string Get([System.ComponentModel.Description("The order id")] int id) => "ok";
+            """);
+        var result = GeneratorTestHarness.Run(src);
+        Assert.Contains("[global::System.ComponentModel.Description(\"The order id\")]", result.AllGeneratedSource);
+    }
+
+    [Fact]
+    public void Xml_param_doc_wins_over_Description_attribute()
+    {
+        var src = Wrap("""
+            /// <summary>x</summary>
+            /// <param name="id">From XML</param>
+            [HttpGet("{id}")]
+            [McpTool]
+            public string Get([System.ComponentModel.Description("From attribute")] int id) => "ok";
+            """);
+        var result = GeneratorTestHarness.Run(src);
+        Assert.Contains("Description(\"From XML\")", result.AllGeneratedSource);
+        Assert.DoesNotContain("From attribute\")", result.AllGeneratedSource);
+    }
 }

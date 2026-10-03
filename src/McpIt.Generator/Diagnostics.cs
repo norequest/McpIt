@@ -27,4 +27,22 @@ public static class Diagnostics
         category: "McpIt",
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true);
+
+    // Discoverability lints are Info, not Warning: they are advice for better tool selection by
+    // the model, and must not break consumers that build with TreatWarningsAsErrors.
+    public static readonly DiagnosticDescriptor ShortDescription = new(
+        id: "MCPGEN004",
+        title: "MCP tool description is too short to be discoverable",
+        messageFormat: "The description of MCP tool '{0}' is too short to be discoverable; describe what the tool does and when to use it (at least a short sentence that is more than the tool's name or title)",
+        category: "McpIt",
+        defaultSeverity: DiagnosticSeverity.Info,
+        isEnabledByDefault: true);
+
+    public static readonly DiagnosticDescriptor UndescribedParameter = new(
+        id: "MCPGEN005",
+        title: "MCP tool parameter has no description",
+        messageFormat: "MCP tool '{0}' has parameters without a description: {1}; add an XML <param> or [Description] so the model knows what to pass",
+        category: "McpIt",
+        defaultSeverity: DiagnosticSeverity.Info,
+        isEnabledByDefault: true);
 }

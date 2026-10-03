@@ -33,7 +33,15 @@ public sealed record EndpointModel(
     int? OutputMaxItems,
     string? Title,
     LocationInfo? Location,
-    string? RequiredScope = null)
+    string? RequiredScope = null,
+    // Discoverability metadata from [McpTool(Category/Keywords/Priority)]; feeds the generated
+    // McpItToolCatalog only and never changes the emitted tool itself.
+    string? Category = null,
+    EquatableArray<string> Keywords = default,
+    int Priority = 0,
+    // Names of tool input parameters with neither an XML <param> nor a [Description];
+    // drives the MCPGEN005 discoverability lint.
+    EquatableArray<string> UndescribedParameters = default)
 {
     public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
 

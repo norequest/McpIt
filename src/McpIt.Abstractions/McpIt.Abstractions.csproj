@@ -8,7 +8,7 @@
          `using McpIt;` API), not `McpIt.Abstractions`. RootNamespace makes
          that the tooling-expected namespace so IDE "adjust namespaces" won't move them. -->
     <RootNamespace>McpIt</RootNamespace>
-    <Description>Attributes ([McpTool], [McpToolOutput]) for McpIt, which turns ASP.NET Core endpoints into MCP tools at build time.</Description>
+    <Description>Attributes ([McpTool], [McpToolOutput]) for McpIt, which exposes ASP.NET Core controller actions and minimal-API endpoints as Model Context Protocol (MCP) tools at build time. Install the McpIt package; this one comes with it.</Description>
   </PropertyGroup>
 
 </Project>
