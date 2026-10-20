@@ -1,0 +1,25 @@
+{
+  "name": "mcpit",
+  "owner": {
+    "name": "Tornike Matiashvili",
+    "url": "https://github.com/norequest"
+  },
+  "metadata": {
+    "description": "Agent skills for McpIt: expose ASP.NET Core Web APIs to AI agents as MCP tools."
+  },
+  "plugins": [
+    {
+      "name": "mcpit",
+      "description": "Teaches the agent to add McpIt to an ASP.NET Core project: install, Program.cs wiring, choosing and annotating endpoints with [McpTool], output trimming, auth forwarding and MCPGEN diagnostics.",
+      "source": "./",
+      "strict": false,
+      "version": "1.5.0",
+      "license": "MIT",
+      "homepage": "https://github.com/norequest/McpIt",
+      "repository": "https://github.com/norequest/McpIt",
+      "keywords": ["mcp", "aspnetcore", "dotnet", "csharp", "model-context-protocol"],
+      "category": "development",
+      "skills": ["./skills/mcpit"]
+    }
+  ]
+}

@@ -312,6 +312,20 @@ Nested `MapGroup` chains work: the generator walks the full chain and concatenat
 
 ---
 
+## Agent skill
+
+The [`skills/mcpit`](skills/mcpit/SKILL.md) skill teaches a coding agent to add McpIt to an ASP.NET Core project: install, `Program.cs` wiring, choosing and annotating endpoints, output trimming, auth forwarding and `MCPGEN` diagnostics. It uses the open Agent Skills format, so it works in Claude Code, Cursor, GitHub Copilot and other agents that load skills.
+
+```bash
+# Claude Code
+/plugin marketplace add norequest/McpIt
+/plugin install mcpit@mcpit
+```
+
+For other agents, copy the `skills/mcpit` folder into the agent's skills directory.
+
+---
+
 ## Token report tool
 
 `mcp-token-report` is an offline analyzer that shows how many tokens your `tools/list` surface spends in the model's context. AI agents load every tool's name, description, and input schema before the user asks anything, so a large tool surface is a real, recurring context cost. The tool reads a running MCP server or a saved `tools/list` JSON file, reports per-tool and total token counts, and can gate a build with `--budget`. It is fully offline and deterministic, so it is safe in CI.
